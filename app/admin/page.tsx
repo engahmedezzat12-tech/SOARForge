@@ -1,7 +1,8 @@
 import Link from 'next/link';
 
 import { getDatabaseSnapshot, summarizeDatabaseReadiness } from '@/lib/product-core/db-store';
-
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
 const TENANT_ID = 'tenant_internal_lab';
 
 function Metric({ label, value, note }: { label: string; value: string | number; note: string }) {
