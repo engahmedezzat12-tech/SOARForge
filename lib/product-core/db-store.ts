@@ -203,15 +203,16 @@ export async function updateDatabaseValidationResult(input: {
 
   await prisma.auditLog.create({
     data: {
-      tenantId: input.tenantId,
-      userId: 'user_demo_admin',
+      tenantId: updated.tenantId,
+      userId: null,
       action: 'VALIDATION_RESULT_UPDATED',
       targetType: 'validation_result',
       targetId: updated.id,
       metadata: {
         status: input.status,
         evidenceProvided: Boolean(input.evidence),
-      },
+        validatedBy: input.validatedBy ?? 'SOARForge Admin',
+      } as Prisma.InputJsonValue,
     },
   });
 

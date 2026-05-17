@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { AdminValidationUpdater } from '@/components/admin-validation-updater';
 
 import { getDatabaseSnapshot, summarizeDatabaseReadiness } from '@/lib/product-core/db-store';
 
@@ -41,27 +42,36 @@ export default async function ValidationPage() {
         <div className="overflow-hidden rounded-lg border border-border">
           <table className="w-full text-sm">
             <thead className="bg-muted/40 text-left">
-              <tr>
-                <th className="p-3">Item</th>
-                <th className="p-3">Type</th>
-                <th className="p-3">Owner</th>
-                <th className="p-3">Status</th>
-                <th className="p-3">Evidence</th>
-                <th className="p-3">Validated By</th>
-              </tr>
-            </thead>
-            <tbody>
-              {snapshot.validationResults.map((item) => (
-                <tr key={item.id} className="border-t border-border/70">
-                  <td className="p-3 font-medium">{item.itemName}</td>
-                  <td className="p-3 text-muted-foreground">{item.itemType}</td>
-                  <td className="p-3 text-muted-foreground">{item.owner}</td>
-                  <td className={`p-3 font-semibold ${statusClass(item.status)}`}>{item.status}</td>
-                  <td className="p-3 text-muted-foreground">{item.evidence || 'Pending evidence'}</td>
-                  <td className="p-3 text-muted-foreground">{item.validatedBy || '—'}</td>
-                </tr>
-              ))}
-            </tbody>
+  <tr>
+    <th className="p-3">Item</th>
+    <th className="p-3">Type</th>
+    <th className="p-3">Owner</th>
+    <th className="p-3">Status</th>
+    <th className="p-3">Evidence</th>
+    <th className="p-3">Validated By</th>
+    <th className="p-3">Update</th>
+  </tr>
+</thead>
+<tbody>
+  {snapshot.validationResults.map((item) => (
+    <tr key={item.id} className="border-t border-border/70 align-top">
+      <td className="p-3 font-medium">{item.itemName}</td>
+      <td className="p-3 text-muted-foreground">{item.itemType}</td>
+      <td className="p-3 text-muted-foreground">{item.owner}</td>
+      <td className={`p-3 font-semibold ${statusClass(item.status)}`}>{item.status}</td>
+      <td className="p-3 text-muted-foreground">{item.evidence || 'Pending evidence'}</td>
+      <td className="p-3 text-muted-foreground">{item.validatedBy || '—'}</td>
+      <td className="p-3 min-w-[360px]">
+        <AdminValidationUpdater
+          id={item.id}
+          currentStatus={item.status}
+          currentEvidence={item.evidence}
+          currentValidatedBy={item.validatedBy}
+        />
+      </td>
+    </tr>
+  ))}
+</tbody>
           </table>
         </div>
 
