@@ -51,9 +51,9 @@ export function AdminValidationUpdater({
 
       setMessage('Saved');
 
-      startTransition(() => {
-        router.refresh();
-      });
+      setTimeout(() => {
+        window.location.reload();
+      }, 500);
     } catch (error) {
       console.error('Validation save failed:', error);
       setMessage('Failed to save update');
