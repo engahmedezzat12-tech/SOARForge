@@ -2,7 +2,8 @@ import Link from 'next/link';
 import { AdminValidationUpdater } from '@/components/admin-validation-updater';
 
 import { getDatabaseSnapshot, summarizeDatabaseReadiness } from '@/lib/product-core/db-store';
-
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
 const TENANT_ID = 'tenant_internal_lab';
 
 function statusClass(status: string) {

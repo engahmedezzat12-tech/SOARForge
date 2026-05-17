@@ -51,9 +51,10 @@ export function AdminValidationUpdater({
 
       setMessage('Saved');
 
-      setTimeout(() => {
-        window.location.reload();
-      }, 500);
+setTimeout(() => {
+  window.location.href = `${window.location.pathname}?refresh=${Date.now()}`;
+}, 500);
+
     } catch (error) {
       console.error('Validation save failed:', error);
       setMessage('Failed to save update');

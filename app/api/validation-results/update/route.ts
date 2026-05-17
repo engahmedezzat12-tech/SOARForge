@@ -2,7 +2,8 @@ import { NextResponse } from 'next/server';
 
 import { updateDatabaseValidationResult } from '@/lib/product-core/db-store';
 import { ValidationUpdateSchema } from '@/lib/product-core/input-validation';
-
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
 const TENANT_ID = 'tenant_internal_lab';
 
 export async function POST(request: Request) {
