@@ -1,19 +1,30 @@
-import { DEMO_SESSION } from '@/lib/product-core/security';
-import { getTenantScopedSnapshot } from '@/lib/product-core/store';
+import Link from 'next/link';
 
-export default function AuditPage() {
-  const snapshot = getTenantScopedSnapshot(DEMO_SESSION.tenantId);
+import { getDatabaseSnapshot } from '@/lib/product-core/db-store';
+
+const TENANT_ID = 'tenant_internal_lab';
+
+export default async function AuditPage() {
+  const snapshot = await getDatabaseSnapshot(TENANT_ID);
+
   return (
-    <main className="min-h-screen bg-background p-8 text-foreground">
+    <main className="min-h-screen bg-background text-foreground p-8">
       <div className="mx-auto max-w-6xl space-y-6">
         <div>
-          <p className="text-sm text-muted-foreground">Audit Logging</p>
-          <h1 className="text-3xl font-bold">Security Audit Trail</h1>
-          <p className="mt-2 text-muted-foreground">Every production action should create an immutable audit record with tenant, user, target, and metadata.</p>
+          <Link href="/admin" className="text-sm text-cyan-400 hover:underline">
+            ← Back to Admin
+          </Link>
+          <p className="mt-4 text-sm text-muted-foreground">Audit Logging</p>
+          <h1 className="text-3xl font-bold">Persistent Security Audit Trail</h1>
+          <p className="mt-2 max-w-3xl text-muted-foreground">
+            These audit events are loaded from PostgreSQL and should track tenant, user, target,
+            and action metadata for production governance.
+          </p>
         </div>
+
         <div className="overflow-hidden rounded-lg border border-border">
           <table className="w-full text-sm">
-            <thead className="bg-muted/50 text-left">
+            <thead className="bg-muted/40 text-left">
               <tr>
                 <th className="p-3">Time</th>
                 <th className="p-3">Action</th>
@@ -22,16 +33,25 @@ export default function AuditPage() {
               </tr>
             </thead>
             <tbody>
-              {snapshot.auditLogs.map((item) => (
-                <tr key={item.id} className="border-t border-border">
-                  <td className="p-3 text-muted-foreground">{item.createdAt}</td>
-                  <td className="p-3 font-medium">{item.action}</td>
-                  <td className="p-3 text-muted-foreground">{item.targetType ?? '-'} / {item.targetId ?? '-'}</td>
-                  <td className="p-3 text-muted-foreground"><code>{JSON.stringify(item.metadata)}</code></td>
+              {snapshot.auditLogs.map((log) => (
+                <tr key={log.id} className="border-t border-border/70">
+                  <td className="p-3 text-muted-foreground">{log.createdAt}</td>
+                  <td className="p-3 font-medium">{log.action}</td>
+                  <td className="p-3 text-muted-foreground">
+                    {[log.targetType, log.targetId].filter(Boolean).join(' / ') || '—'}
+                  </td>
+                  <td className="p-3 text-muted-foreground">
+                    <code className="break-all">{JSON.stringify(log.metadata ?? {})}</code>
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
+        </div>
+
+        <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-4 text-sm">
+          <strong>Database mode active:</strong> audit events are loaded from PostgreSQL/Neon.
+          Validation updates and future admin actions should create persistent audit records.
         </div>
       </div>
     </main>

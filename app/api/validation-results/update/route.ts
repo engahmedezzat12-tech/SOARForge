@@ -1,37 +1,57 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextResponse } from 'next/server';
+
+import { updateDatabaseValidationResult } from '@/lib/product-core/db-store';
 import { ValidationUpdateSchema } from '@/lib/product-core/input-validation';
-import { jsonError, requirePermission, securityHeaders } from '@/lib/product-core/security';
-import { updateValidationResult, summarizeReadiness, addTenantLearning } from '@/lib/product-core/store';
-import { writeAuditLog } from '@/lib/product-core/audit';
 
-export async function POST(request: NextRequest) {
+const TENANT_ID = 'tenant_internal_lab';
+
+export async function POST(request: Request) {
   try {
-    const session = requirePermission(request, 'validation:update');
-    const body = ValidationUpdateSchema.parse(await request.json());
-    const result = updateValidationResult({ ...body, tenantId: session.tenantId });
-    if (!result) return NextResponse.json({ ok: false, error: 'Validation item not found' }, { status: 404 });
+    const body = await request.json();
+    const parsed = ValidationUpdateSchema.safeParse(body);
 
-    if (body.status === 'PASSED' || body.status === 'FAILED') {
-      addTenantLearning({
-        tenantId: session.tenantId,
-        signalType: body.status === 'PASSED' ? 'uat_passed' : 'uat_failed',
-        signalKey: result.itemName,
-        confidenceDelta: body.status === 'PASSED' ? 5 : -10,
-        metadata: { validationId: result.id, itemType: result.itemType },
-      });
+    if (!parsed.success) {
+      return NextResponse.json(
+        {
+          mode: 'database',
+          error: 'Invalid validation update payload',
+          details: parsed.error.flatten(),
+        },
+        { status: 400 },
+      );
     }
 
-    await writeAuditLog({
-      tenantId: session.tenantId,
-      userId: session.userId,
-      action: 'VALIDATION_RESULT_UPDATED',
-      targetType: 'validation_result',
-      targetId: result.id,
-      metadata: { status: body.status, itemName: result.itemName },
+    const updated = await updateDatabaseValidationResult({
+      id: parsed.data.id,
+      tenantId: TENANT_ID,
+      status: parsed.data.status,
+      evidence: parsed.data.evidence,
+      validatedBy: parsed.data.validatedBy ?? 'SOARForge Admin',
     });
 
-    return securityHeaders(NextResponse.json({ ok: true, validationResult: result, readiness: summarizeReadiness(session.tenantId) }));
+    if (!updated) {
+      return NextResponse.json(
+        {
+          mode: 'database',
+          error: 'Validation item not found',
+        },
+        { status: 404 },
+      );
+    }
+
+    return NextResponse.json({
+      mode: 'database',
+      validationResult: updated,
+    });
   } catch (error) {
-    return jsonError(error);
+    console.error('Validation result DB update failed:', error);
+
+    return NextResponse.json(
+      {
+        mode: 'database',
+        error: 'Failed to update validation result in database',
+      },
+      { status: 500 },
+    );
   }
 }

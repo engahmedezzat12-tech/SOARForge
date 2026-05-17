@@ -1,17 +1,29 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { jsonError, requirePermission, securityHeaders } from '@/lib/product-core/security';
-import { getTenantScopedSnapshot, summarizeReadiness } from '@/lib/product-core/store';
+import { NextResponse } from 'next/server';
 
-export async function GET(request: NextRequest) {
+import { getDatabaseSnapshot, summarizeDatabaseReadiness } from '@/lib/product-core/db-store';
+
+const TENANT_ID = 'tenant_internal_lab';
+
+export async function GET() {
   try {
-    const session = requirePermission(request, 'validation:read');
-    const snapshot = getTenantScopedSnapshot(session.tenantId);
-    return securityHeaders(NextResponse.json({
-      ok: true,
+    const snapshot = await getDatabaseSnapshot(TENANT_ID);
+    const readiness = await summarizeDatabaseReadiness(TENANT_ID);
+
+    return NextResponse.json({
+      mode: 'database',
+      tenantId: TENANT_ID,
       validationResults: snapshot.validationResults,
-      readiness: summarizeReadiness(session.tenantId),
-    }));
+      readiness,
+    });
   } catch (error) {
-    return jsonError(error);
+    console.error('Validation results DB load failed:', error);
+
+    return NextResponse.json(
+      {
+        mode: 'database',
+        error: 'Failed to load validation results from database',
+      },
+      { status: 500 },
+    );
   }
 }
