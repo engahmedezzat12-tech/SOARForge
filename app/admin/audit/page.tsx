@@ -1,26 +1,68 @@
 import Link from 'next/link';
 
 import { getDatabaseSnapshot } from '@/lib/product-core/db-store';
+
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
+
 const TENANT_ID = 'tenant_internal_lab';
+
+function actionBadge(action: string) {
+  const base = 'inline-flex rounded-full px-2.5 py-1 text-xs font-semibold';
+
+  if (action.includes('VALIDATION')) {
+    return `${base} border border-cyan-500/30 bg-cyan-500/10 text-cyan-400`;
+  }
+
+  if (action.includes('SEEDED')) {
+    return `${base} border border-emerald-500/30 bg-emerald-500/10 text-emerald-400`;
+  }
+
+  if (action.includes('FAILED')) {
+    return `${base} border border-red-500/30 bg-red-500/10 text-red-400`;
+  }
+
+  return `${base} border border-muted bg-muted/30 text-muted-foreground`;
+}
 
 export default async function AuditPage() {
   const snapshot = await getDatabaseSnapshot(TENANT_ID);
 
   return (
     <main className="min-h-screen bg-background text-foreground p-8">
-      <div className="mx-auto max-w-6xl space-y-6">
+      <div className="mx-auto max-w-7xl space-y-6">
         <div>
           <Link href="/admin" className="text-sm text-cyan-400 hover:underline">
             ← Back to Admin
           </Link>
+
           <p className="mt-4 text-sm text-muted-foreground">Audit Logging</p>
           <h1 className="text-3xl font-bold">Persistent Security Audit Trail</h1>
-          <p className="mt-2 max-w-3xl text-muted-foreground">
-            These audit events are loaded from PostgreSQL and should track tenant, user, target,
-            and action metadata for production governance.
+
+          <p className="mt-2 max-w-4xl text-muted-foreground">
+            Review persistent administrative actions, validation updates, export events, and knowledge update
+            activity. Events are loaded from PostgreSQL and provide a traceable operational history.
           </p>
+        </div>
+
+        <div className="grid gap-4 md:grid-cols-3">
+          <div className="rounded-lg border border-border bg-card/60 p-4">
+            <div className="text-xs uppercase tracking-wide text-muted-foreground">Audit Events</div>
+            <div className="mt-2 text-3xl font-bold">{snapshot.auditLogs.length}</div>
+            <div className="mt-1 text-xs text-muted-foreground">Persistent security trail</div>
+          </div>
+
+          <div className="rounded-lg border border-border bg-card/60 p-4">
+            <div className="text-xs uppercase tracking-wide text-muted-foreground">Tenant Scope</div>
+            <div className="mt-2 text-3xl font-bold">{snapshot.tenants[0]?.slug ?? '—'}</div>
+            <div className="mt-1 text-xs text-muted-foreground">Loaded from PostgreSQL</div>
+          </div>
+
+          <div className="rounded-lg border border-border bg-card/60 p-4">
+            <div className="text-xs uppercase tracking-wide text-muted-foreground">Latest Action</div>
+            <div className="mt-2 text-lg font-semibold">{snapshot.auditLogs[0]?.action ?? 'No events'}</div>
+            <div className="mt-1 text-xs text-muted-foreground">Most recent recorded activity</div>
+          </div>
         </div>
 
         <div className="overflow-hidden rounded-lg border border-border">
@@ -33,16 +75,21 @@ export default async function AuditPage() {
                 <th className="p-3">Metadata</th>
               </tr>
             </thead>
+
             <tbody>
               {snapshot.auditLogs.map((log) => (
-                <tr key={log.id} className="border-t border-border/70">
-                  <td className="p-3 text-muted-foreground">{log.createdAt}</td>
-                  <td className="p-3 font-medium">{log.action}</td>
+                <tr key={log.id} className="border-t border-border/70 align-top">
+                  <td className="whitespace-nowrap p-3 text-muted-foreground">{log.createdAt}</td>
+                  <td className="p-3">
+                    <span className={actionBadge(log.action)}>{log.action}</span>
+                  </td>
                   <td className="p-3 text-muted-foreground">
                     {[log.targetType, log.targetId].filter(Boolean).join(' / ') || '—'}
                   </td>
-                  <td className="p-3 text-muted-foreground">
-                    <code className="break-all">{JSON.stringify(log.metadata ?? {})}</code>
+                  <td className="max-w-[520px] p-3 text-muted-foreground">
+                    <code className="break-all rounded bg-muted/30 px-2 py-1 text-xs">
+                      {JSON.stringify(log.metadata ?? {})}
+                    </code>
                   </td>
                 </tr>
               ))}
@@ -51,8 +98,8 @@ export default async function AuditPage() {
         </div>
 
         <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-4 text-sm">
-          <strong>Database mode active:</strong> audit events are loaded from PostgreSQL/Neon.
-          Validation updates and future admin actions should create persistent audit records.
+          <strong>Database mode active:</strong> audit events are persisted in PostgreSQL/Neon through Prisma.
+          Validation updates and future admin actions are recorded as traceable audit events.
         </div>
       </div>
     </main>
