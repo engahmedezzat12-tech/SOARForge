@@ -1,0 +1,33 @@
+services:
+  soarforge:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://soarforge:soarforge@postgres:5432/soarforge
+      AUTH_SECRET: change-me
+      NEXTAUTH_URL: http://localhost:3000
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      - postgres
+      - redis
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: soarforge
+      POSTGRES_PASSWORD: soarforge
+      POSTGRES_DB: soarforge
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+volumes:
+  postgres-data:

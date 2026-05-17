@@ -1,0 +1,164 @@
+// ============================================================
+// SOARForge Production Core Prisma Schema
+// Target: PostgreSQL. This schema is included for Phase 1 production migration.
+// The current Vercel demo build uses a no-dependency in-memory adapter so builds
+// remain stable until DATABASE_URL and migrations are enabled.
+// ============================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  SUPER_ADMIN
+  TENANT_ADMIN
+  SOC_MANAGER
+  SOC_ENGINEER
+  VIEWER
+  AUDITOR
+}
+
+enum ValidationStatus {
+  PENDING
+  PASSED
+  FAILED
+  NOT_APPLICABLE
+}
+
+enum KnowledgeUpdateStatus {
+  NO_UPDATE
+  UPDATE_AVAILABLE
+  STAGED
+  REVIEW_REQUIRED
+  APPROVED
+  PARTIALLY_APPROVED
+  REJECTED
+  APPLIED
+  ROLLED_BACK
+  FAILED
+}
+
+model Tenant {
+  id        String   @id @default(cuid())
+  name      String
+  slug      String   @unique
+  status    String   @default("PILOT")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users      User[]
+  playbooks  Playbook[]
+  auditLogs  AuditLog[]
+  validation ValidationResult[]
+  learning   TenantLearningProfile[]
+}
+
+model User {
+  id           String   @id @default(cuid())
+  tenantId     String
+  tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  email        String   @unique
+  name         String?
+  passwordHash String?
+  role         Role     @default(VIEWER)
+  status       String   @default("ACTIVE")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  auditLogs AuditLog[]
+}
+
+model Playbook {
+  id           String   @id @default(cuid())
+  tenantId     String
+  tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name         String
+  incidentType String?
+  platform     String?
+  status       String   @default("draft")
+  data         Json
+  createdById  String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  exports Export[]
+}
+
+model Export {
+  id                  String   @id @default(cuid())
+  tenantId            String
+  playbookId           String
+  playbook             Playbook @relation(fields: [playbookId], references: [id], onDelete: Cascade)
+  exportType           String
+  platform             String
+  fileName             String?
+  content              Json?
+  readinessScore       Int?
+  threatCoverageScore  Int?
+  intelligenceScore    Int?
+  createdById          String?
+  createdAt            DateTime @default(now())
+}
+
+model ValidationResult {
+  id          String           @id @default(cuid())
+  tenantId    String
+  tenant      Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  playbookId  String?
+  itemType    String
+  itemName    String
+  owner       String
+  status      ValidationStatus @default(PENDING)
+  evidence    String?
+  validatedBy String?
+  validatedAt DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model KnowledgeUpdate {
+  id                String                @id @default(cuid())
+  tenantId          String?
+  source            String
+  localVersion      String?
+  stagedVersion     String?
+  status            KnowledgeUpdateStatus @default(NO_UPDATE)
+  diff              Json?
+  affectedTemplates Json?
+  approvedBy        String?
+  approvedAt        DateTime?
+  appliedAt         DateTime?
+  rollbackPoint     String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  tenantId   String?
+  tenant     Tenant?  @relation(fields: [tenantId], references: [id])
+  userId     String?
+  user       User?    @relation(fields: [userId], references: [id])
+  action     String
+  targetType String?
+  targetId   String?
+  ipAddress  String?
+  metadata   Json?
+  createdAt  DateTime @default(now())
+}
+
+model TenantLearningProfile {
+  id              String   @id @default(cuid())
+  tenantId        String
+  tenant          Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  signalType      String
+  signalKey       String
+  confidenceDelta Int
+  metadata        Json?
+  createdAt       DateTime @default(now())
+}
