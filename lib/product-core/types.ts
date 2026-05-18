@@ -114,6 +114,9 @@ export interface AuditLogRecord {
   targetId?: string;
   ipAddress?: string;
   metadata: Record<string, unknown>;
+  previousHash?: string;
+  integrityHash?: string;
+  integrityVersion?: number;
   createdAt: string;
 }
 

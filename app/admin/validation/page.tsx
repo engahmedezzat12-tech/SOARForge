@@ -1,12 +1,15 @@
 import Link from 'next/link';
+import { redirect } from 'next/navigation';
 import { AdminValidationUpdater } from '@/components/admin-validation-updater';
+import { SignOutButton } from '@/components/sign-out-button';
 
+import { requireSession } from '@/lib/auth/session';
+import { hasPermission } from '@/lib/auth/rbac';
 import { getDatabaseSnapshot, summarizeDatabaseReadiness } from '@/lib/product-core/db-store';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
-const TENANT_ID = 'tenant_internal_lab';
 
 function statusBadge(status: string) {
   const base = 'inline-flex rounded-full px-2.5 py-1 text-xs font-semibold';
@@ -45,16 +48,22 @@ function SummaryCard({
 }
 
 export default async function ValidationPage() {
-  const snapshot = await getDatabaseSnapshot(TENANT_ID);
-  const readiness = await summarizeDatabaseReadiness(TENANT_ID);
+  const session = await requireSession();
+  if (!hasPermission(session.role, 'validation.read')) redirect('/sign-in');
+
+  const snapshot = await getDatabaseSnapshot(session.tenantId);
+  const readiness = await summarizeDatabaseReadiness(session.tenantId);
 
   return (
     <main className="min-h-screen bg-background text-foreground p-8">
       <div className="mx-auto max-w-7xl space-y-6">
         <div>
-          <Link href="/admin" className="text-sm text-cyan-400 hover:underline">
-            ← Back to Admin
-          </Link>
+          <div className="flex items-center justify-between">
+            <Link href="/admin" className="text-sm text-cyan-400 hover:underline">
+              ← Back to Admin
+            </Link>
+            <SignOutButton />
+          </div>
 
           <p className="mt-4 text-sm text-muted-foreground">Tenant Validation Center</p>
           <h1 className="text-3xl font-bold">Persistent Validation Results</h1>

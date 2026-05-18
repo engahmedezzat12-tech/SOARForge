@@ -1,5 +1,5 @@
-import type { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/db/prisma';
+import { createHashChainedAuditLog } from '@/lib/product-core/audit-integrity';
 
 import type {
   AuditLogRecord,
@@ -170,6 +170,9 @@ export async function getDatabaseSnapshot(tenantId = 'tenant_internal_lab'): Pro
       targetId: a.targetId ?? undefined,
       ipAddress: a.ipAddress ?? undefined,
       metadata: toJsonRecord(a.metadata),
+      previousHash: a.previousHash ?? undefined,
+      integrityHash: a.integrityHash ?? undefined,
+      integrityVersion: a.integrityVersion ?? undefined,
       createdAt: a.createdAt.toISOString(),
     })),
     tenantLearning: tenantLearning.map<TenantLearningRecord>((l) => ({
@@ -190,9 +193,18 @@ export async function updateDatabaseValidationResult(input: {
   status: ValidationStatus;
   evidence?: string;
   validatedBy?: string;
+  userId?: string;
 }): Promise<ValidationResultRecord | undefined> {
+  const existing = await prisma.validationResult.findFirst({
+    where: { id: input.id, tenantId: input.tenantId },
+  });
+
+  if (!existing) {
+    return undefined;
+  }
+
   const updated = await prisma.validationResult.update({
-    where: { id: input.id },
+    where: { id: existing.id },
     data: {
       status: input.status,
       evidence: input.evidence,
@@ -201,18 +213,16 @@ export async function updateDatabaseValidationResult(input: {
     },
   });
 
-  await prisma.auditLog.create({
-    data: {
-      tenantId: updated.tenantId,
-      userId: null,
-      action: 'VALIDATION_RESULT_UPDATED',
-      targetType: 'validation_result',
-      targetId: updated.id,
-      metadata: {
-        status: input.status,
-        evidenceProvided: Boolean(input.evidence),
-        validatedBy: input.validatedBy ?? 'SOARForge Admin',
-      } as Prisma.InputJsonValue,
+  await createHashChainedAuditLog({
+    tenantId: updated.tenantId,
+    userId: input.userId ?? null,
+    action: 'VALIDATION_RESULT_UPDATED',
+    targetType: 'validation_result',
+    targetId: updated.id,
+    metadata: {
+      status: input.status,
+      evidenceProvided: Boolean(input.evidence),
+      validatedBy: input.validatedBy ?? 'SOARForge Admin',
     },
   });
 
@@ -233,16 +243,14 @@ export async function updateDatabaseValidationResult(input: {
 }
 
 export async function writeDatabaseAuditLog(input: Omit<AuditLogRecord, 'id' | 'createdAt'>): Promise<AuditLogRecord> {
-  const created = await prisma.auditLog.create({
-    data: {
-      tenantId: input.tenantId,
-      userId: input.userId,
-      action: input.action,
-      targetType: input.targetType,
-      targetId: input.targetId,
-      ipAddress: input.ipAddress,
-      metadata: (input.metadata ?? {}) as Prisma.InputJsonValue,
-    },
+  const created = await createHashChainedAuditLog({
+    tenantId: input.tenantId,
+    userId: input.userId,
+    action: input.action,
+    targetType: input.targetType,
+    targetId: input.targetId,
+    ipAddress: input.ipAddress,
+    metadata: input.metadata ?? {},
   });
 
   return {
@@ -254,6 +262,9 @@ export async function writeDatabaseAuditLog(input: Omit<AuditLogRecord, 'id' | '
     targetId: created.targetId ?? undefined,
     ipAddress: created.ipAddress ?? undefined,
     metadata: toJsonRecord(created.metadata),
+    previousHash: created.previousHash ?? undefined,
+    integrityHash: created.integrityHash ?? undefined,
+    integrityVersion: created.integrityVersion ?? undefined,
     createdAt: created.createdAt.toISOString(),
   };
 }

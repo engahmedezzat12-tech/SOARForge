@@ -1,17 +1,21 @@
 import { NextResponse } from 'next/server';
 
 import { getDatabaseSnapshot, summarizeDatabaseReadiness } from '@/lib/product-core/db-store';
+import { withSecureApi } from '@/lib/security/api-wrapper';
 
-const TENANT_ID = 'tenant_internal_lab';
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
 
-export async function GET() {
-  try {
-    const snapshot = await getDatabaseSnapshot(TENANT_ID);
-    const readiness = await summarizeDatabaseReadiness(TENANT_ID);
+export const GET = withSecureApi({
+  permission: 'admin.read',
+  rateLimit: 'generalApi',
+  async handler({ session }) {
+    const snapshot = await getDatabaseSnapshot(session.tenantId);
+    const readiness = await summarizeDatabaseReadiness(session.tenantId);
 
     return NextResponse.json({
       mode: 'database',
-      tenantId: TENANT_ID,
+      tenantId: session.tenantId,
       summary: {
         tenants: snapshot.tenants.length,
         users: snapshot.users.length,
@@ -25,15 +29,5 @@ export async function GET() {
       readiness,
       snapshot,
     });
-  } catch (error) {
-    console.error('Product core DB status failed:', error);
-
-    return NextResponse.json(
-      {
-        mode: 'database',
-        error: 'Failed to load product core status from database',
-      },
-      { status: 500 },
-    );
-  }
-}
+  },
+});

@@ -1,8 +1,11 @@
 import { PrismaClient, Role, ValidationStatus } from '@prisma/client';
+import { hashPassword } from '../lib/auth/password';
 
 const prisma = new PrismaClient();
 
 async function main() {
+  const adminPassword = process.env.SOARFORGE_ADMIN_PASSWORD;
+  const adminPasswordHash = adminPassword ? await hashPassword(adminPassword) : undefined;
   const tenant = await prisma.tenant.upsert({
     where: { slug: 'internal-lab' },
     update: {
@@ -23,6 +26,7 @@ async function main() {
       name: 'SOARForge Admin',
       role: Role.TENANT_ADMIN,
       status: 'ACTIVE',
+      ...(adminPasswordHash ? { passwordHash: adminPasswordHash, lastPasswordChangeAt: new Date() } : {}),
     },
     create: {
       tenantId: tenant.id,
@@ -30,6 +34,7 @@ async function main() {
       name: 'SOARForge Admin',
       role: Role.TENANT_ADMIN,
       status: 'ACTIVE',
+      ...(adminPasswordHash ? { passwordHash: adminPasswordHash, lastPasswordChangeAt: new Date() } : {}),
     },
   });
 
@@ -144,6 +149,10 @@ async function main() {
       },
     },
   });
+
+  if (!adminPasswordHash) {
+    console.warn('SOARFORGE_ADMIN_PASSWORD is not set. Admin user was seeded without a password hash.');
+  }
 
   console.log('SOARForge database seed completed.');
   console.log({ tenant: tenant.slug, user: user.email, playbook: playbook.name });
