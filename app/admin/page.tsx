@@ -21,7 +21,7 @@ function Metric({ label, value, note }: { label: string; value: string | number;
 
 export default async function AdminOverviewPage() {
   const session = await requireSession();
-  if (!hasPermission(session.role, 'admin.read')) redirect('/sign-in');
+if (!hasPermission(session.role, 'admin.read')) redirect('/access-denied');
 
   const snapshot = await getDatabaseSnapshot(session.tenantId);
   const readiness = await summarizeDatabaseReadiness(session.tenantId);
