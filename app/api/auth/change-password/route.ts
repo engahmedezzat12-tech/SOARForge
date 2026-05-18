@@ -74,6 +74,7 @@ export async function POST(request: Request) {
       passwordHash: newPasswordHash,
       failedLoginCount: 0,
       lockedUntil: null,
+      mustChangePassword: false,
       lastPasswordChangeAt: new Date(),
     },
   });

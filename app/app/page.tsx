@@ -1,7 +1,7 @@
 'use client';
 import { SignOutButton } from '@/components/sign-out-button';
 import { SOARForgeLogo } from '@/components/soarforge-logo';
-import { useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 type CurrentUser = {
     authenticated: boolean;
     email?: string;
@@ -134,7 +134,7 @@ export default function HomePage() {
 
 <SignOutButton />
 
-<PlatformSelector variant="header" />
+    <PlatformSelector variant="header" />
 
     <div className="flex gap-1.5">
       {WIZARD_STEPS.map((step) => (

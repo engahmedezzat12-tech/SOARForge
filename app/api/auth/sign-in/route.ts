@@ -111,5 +111,8 @@ export async function POST(request: Request) {
     userAgent: fingerprint.userAgent,
   });
 
-  return NextResponse.json({ ok: true });
+  return NextResponse.json({
+    ok: true,
+    mustChangePassword: user.mustChangePassword,
+  });
 }

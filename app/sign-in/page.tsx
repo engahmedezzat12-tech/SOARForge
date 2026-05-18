@@ -30,7 +30,7 @@ export default function SignInPage() {
         return;
       }
 
-      window.location.href = '/app';
+      window.location.href = data.mustChangePassword ? '/account/security' : '/app';
     } catch {
       setError('Sign-in failed. Please try again.');
     } finally {

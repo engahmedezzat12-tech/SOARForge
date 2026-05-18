@@ -71,6 +71,7 @@ model User {
   lockedUntil          DateTime?
   lastLoginAt          DateTime?
   lastPasswordChangeAt DateTime?
+  mustChangePassword Boolean @default(false)
   role                 Role      @default(VIEWER)
   status               String    @default("ACTIVE")
   createdAt            DateTime  @default(now())
@@ -79,6 +80,22 @@ model User {
   sessions       Session[]
   auditLogs      AuditLog[]
   offlineBundles OfflineBundleImport[]
+}
+model UserInvite {
+  id           String    @id @default(cuid())
+  tenantId     String
+  email        String
+  name         String?
+  role         Role      @default(VIEWER)
+  tokenHash    String    @unique
+  invitedById  String?
+  acceptedAt   DateTime?
+  expiresAt    DateTime
+  createdAt    DateTime  @default(now())
+
+  @@index([tenantId])
+  @@index([email])
+  @@index([expiresAt])
 }
 
 model Session {
