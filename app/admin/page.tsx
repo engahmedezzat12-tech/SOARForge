@@ -87,12 +87,25 @@ if (!hasPermission(session.role, 'admin.read')) redirect('/access-denied');
             </p>
           </Link>
 
-          <Link className="rounded-lg border border-border p-5 hover:bg-muted/40" href="/admin/users">
-            <h2 className="font-semibold">Users & Roles</h2>
-            <p className="mt-2 text-sm text-muted-foreground">
-              Review tenant users, RBAC roles, lockout state, and login posture.
-            </p>
-          </Link>
+          <Link
+  className="rounded-lg border border-cyan-500/30 bg-cyan-500/5 p-5 hover:bg-cyan-500/10"
+  href="/admin/users"
+>
+  <div className="flex items-center justify-between gap-3">
+    <h2 className="font-semibold">Users & Roles</h2>
+    <span className="rounded-full border border-cyan-500/30 bg-cyan-500/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-cyan-300">
+      Manage
+    </span>
+  </div>
+
+  <p className="mt-2 text-sm text-muted-foreground">
+    Add users, reset passwords, update RBAC roles, enable or disable accounts, and enforce password changes.
+  </p>
+
+  <div className="mt-4 inline-flex rounded-md bg-cyan-600 px-3 py-1.5 text-xs font-semibold text-white">
+    Open User Management
+  </div>
+</Link>
 
           <Link className="rounded-lg border border-border p-5 hover:bg-muted/40" href="/admin/tenants">
             <h2 className="font-semibold">Tenant Workspace</h2>
