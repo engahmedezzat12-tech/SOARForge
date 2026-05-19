@@ -45,13 +45,6 @@ export default function SignInPage() {
     );
   }
 
-  function requestAccess() {
-    setError('');
-    setNotice(
-      'Public sign-up is disabled. Access must be granted by a SOARForge tenant administrator or through approved enterprise SSO.'
-    );
-  }
-
   return (
     <main className="min-h-screen overflow-hidden bg-background text-foreground">
       <div className="relative grid min-h-screen lg:grid-cols-[1.05fr_0.95fr]">
@@ -198,13 +191,12 @@ export default function SignInPage() {
               <p className="mt-1 text-muted-foreground">
                 Public sign-up is disabled to protect tenant workspaces.
               </p>
-              <button
-                type="button"
-                onClick={requestAccess}
-                className="mt-3 text-sm font-bold text-cyan-300 hover:underline"
-              >
-                Request access / invite-only sign-up
-              </button>
+              <a
+  href="/request-access"
+  className="mt-3 inline-block text-sm font-bold text-cyan-300 hover:underline"
+>
+  Request access
+</a>
             </div>
           </form>
         </section>

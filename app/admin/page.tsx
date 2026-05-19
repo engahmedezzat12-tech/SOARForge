@@ -116,7 +116,15 @@ if (!hasPermission(session.role, 'admin.read')) redirect('/access-denied');
     Open User Management
   </div>
 </Link>
-
+<Link
+  className="rounded-lg border border-border p-5 hover:bg-muted/40"
+  href="/admin/account-requests"
+>
+  <h2 className="font-semibold">Account Requests</h2>
+  <p className="mt-2 text-sm text-muted-foreground">
+    Review access requests, approve users, assign roles, and generate invite links with expiry dates.
+  </p>
+</Link>
           <Link className="rounded-lg border border-border p-5 hover:bg-muted/40" href="/admin/tenants">
             <h2 className="font-semibold">Tenant Workspace</h2>
             <p className="mt-2 text-sm text-muted-foreground">
