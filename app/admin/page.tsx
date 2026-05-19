@@ -96,6 +96,16 @@ if (!hasPermission(session.role, 'admin.read')) redirect('/access-denied');
               Stage air-gapped update bundles safely. Imports require manual review before use.
             </p>
           </Link>
+          
+          <Link
+  className="rounded-lg border border-border p-5 hover:bg-muted/40"
+  href="/admin/system"
+>
+  <h2 className="font-semibold">System Status</h2>
+  <p className="mt-2 text-sm text-muted-foreground">
+    Check runtime health, database connectivity, tenant counts, and recent platform activity.
+  </p>
+</Link>
 
           <Link
   className="rounded-lg border border-cyan-500/30 bg-cyan-500/5 p-5 hover:bg-cyan-500/10"
