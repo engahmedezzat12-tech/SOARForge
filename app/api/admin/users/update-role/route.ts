@@ -16,6 +16,8 @@ const UpdateRoleSchema = z.object({
 });
 
 export async function POST(request: Request) {
+    const originError = assertSameOrigin(request);
+    if (originError) return originError;
   const session = await requireSession();
 
   if (!hasPermission(session.role, 'user.manage')) {

@@ -2,10 +2,10 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 
 import { prisma } from '@/lib/db/prisma';
-import { getCurrentSession } from '@/lib/auth/session';
+import { requireSession } from '@/lib/auth/session';
 import { hashPassword, verifyPassword } from '@/lib/auth/password';
 import { recordSecurityEvent, SecurityEvents } from '@/lib/product-core/security-events';
-
+import { assertSameOrigin } from '@/lib/security/origin-protection';
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
@@ -23,8 +23,10 @@ const ChangePasswordSchema = z
     message: 'New password must be different from current password',
     path: ['newPassword'],
   });
-
+  
 export async function POST(request: Request) {
+    const originError = assertSameOrigin(request);
+    if (originError) return originError;
   const session = await getCurrentSession();
 
   if (!session) {

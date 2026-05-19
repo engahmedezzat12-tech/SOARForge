@@ -5,7 +5,7 @@ import { getCurrentSession, getRequestFingerprint, type CurrentSession } from '@
 import { hasPermission, type Permission } from '@/lib/auth/rbac';
 import { limitByKey, RateLimitProfiles } from '@/lib/security/rate-limit';
 import { recordSecurityEvent, SecurityEvents } from '@/lib/product-core/security-events';
-
+import { assertSameOrigin } from '@/lib/security/origin-protection';
 type SecureApiContext<T> = {
   request: Request;
   session: CurrentSession;
@@ -22,6 +22,9 @@ type SecureApiOptions<T> = {
 export function withSecureApi<T = undefined>(options: SecureApiOptions<T>) {
   return async function secureHandler(request: Request) {
     const fingerprint = await getRequestFingerprint(request);
+
+    const originError = assertSameOrigin(request);
+    if (originError) return originError;
 
     try {
       const session = await getCurrentSession();

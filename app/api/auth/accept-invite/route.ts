@@ -25,16 +25,18 @@ function hashInviteToken(token: string) {
 }
 
 export async function POST(request: Request) {
-  const body = await request.json().catch(() => undefined);
-  const parsed = AcceptInviteSchema.safeParse(body);
-
-  if (!parsed.success) {
-    return NextResponse.json(
-      { error: parsed.error.issues[0]?.message || 'Invalid invite request' },
-      { status: 422 }
-    );
-  }
-
+    const originError = assertSameOrigin(request);
+    if (originError) return originError;
+  
+    const body = await request.json().catch(() => undefined);
+    const parsed = AcceptInviteSchema.safeParse(body);
+  
+    if (!parsed.success) {
+      return NextResponse.json(
+        { error: parsed.error.issues[0]?.message || 'Invalid invite request' },
+        { status: 422 }
+      );
+    }
   const invite = await prisma.userInvite.findUnique({
     where: { tokenHash: hashInviteToken(parsed.data.token) },
   });

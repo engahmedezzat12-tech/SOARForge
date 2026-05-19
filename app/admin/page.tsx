@@ -79,6 +79,16 @@ if (!hasPermission(session.role, 'admin.read')) redirect('/access-denied');
               Track authentication, RBAC, protected APIs, rate limits, and deployment hardening.
             </p>
           </Link>
+          <Link
+  className="rounded-lg border border-border p-5 hover:bg-muted/40"
+  href="/admin/security-events"
+>
+  <h2 className="font-semibold">Security Events</h2>
+  <p className="mt-2 text-sm text-muted-foreground">
+    Monitor login attempts, RBAC denials, user-management actions, invite usage, and rate-limit hits.
+  </p>
+</Link>
+
 
           <Link className="rounded-lg border border-border p-5 hover:bg-muted/40" href="/admin/offline-bundles">
             <h2 className="font-semibold">Offline Bundle Imports</h2>

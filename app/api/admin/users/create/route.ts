@@ -7,7 +7,7 @@ import { requireSession } from '@/lib/auth/session';
 import { hasPermission } from '@/lib/auth/rbac';
 import { hashPassword } from '@/lib/auth/password';
 import { recordSecurityEvent } from '@/lib/product-core/security-events';
-
+import { assertSameOrigin } from '@/lib/security/origin-protection';
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
@@ -19,6 +19,8 @@ const CreateUserSchema = z.object({
 });
 
 export async function POST(request: Request) {
+    const originError = assertSameOrigin(request);
+if (originError) return originError;
   const session = await requireSession();
 
   if (!hasPermission(session.role, 'user.manage')) {
