@@ -9,20 +9,111 @@ export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
 const sections = [
-  ['Authentication', 'Implemented', 'HttpOnly session cookies, secure password hashing, login throttling, account lockout, and sign-out invalidation.'],
-  ['RBAC', 'Implemented', 'Server-side role to permission checks protect admin pages and API routes.'],
-  ['API Protection', 'Implemented', 'Secure API wrapper enforces auth, RBAC, Zod validation, rate limits, safe errors, and denied-request events.'],
-  ['Tenant Isolation', 'Implemented', 'Sensitive updates use tenantId from session context and reject cross-tenant IDOR paths. PostgreSQL RLS remains an enterprise enhancement.'],
-  ['Security Headers', 'Implemented', 'next.config.mjs applies CSP, HSTS, frame denial, MIME sniffing protection, referrer policy, and permissions policy.'],
-  ['Rate Limiting', 'Implemented', 'Hybrid limiter uses Upstash Redis REST when configured and falls back to local memory for demos.'],
-  ['Audit Logging', 'Implemented', 'Persistent audit events include hash-chain integrity fields for tamper-evident review.'],
-  ['Offline Bundle Safety', 'Implemented foundation', 'Uploads are staged only, metadata and magic bytes are validated, optional RSA signatures are checked, and imports never auto-apply.'],
-  ['Vercel Hardening', 'Partially implemented', 'Environment variables, security headers, production/preview separation, and WAF settings are documented for deployment.'],
-  ['Secrets Hygiene', 'Implemented baseline', 'No secrets are committed; .env and .env.local remain ignored. NEXT_PUBLIC is avoided for sensitive values.'],
-  ['Testing Pack', 'Documented', 'Manual and automated test plans are included for auth, RBAC, tenant isolation, headers, rate limits, and offline bundle staging.'],
-  ['Audit Integrity', 'Implemented', 'Audit logs are hash-chained with previousHash and integrityHash to detect tampering.'],
-  ['Tenant/User Workspace', 'Implemented foundation', 'Tenant and user posture pages provide workspace isolation evidence for commercial pilots.'],
-  ['PostgreSQL RLS', 'Planned enterprise enhancement', 'DBA-reviewed RLS SQL template is included but intentionally not auto-enabled until tenant-context staging tests pass.'],
+  [
+    'Session Authentication',
+    'Implemented',
+    'HttpOnly session cookies, secure password hashing, login throttling, account lockout, sign-out invalidation, and protected session reads.',
+  ],
+  [
+    'RBAC Authorization',
+    'Implemented',
+    'Server-side role-to-permission checks protect admin pages, API routes, tenant workflows, and privileged user-management actions.',
+  ],
+  [
+    'User Management GUI',
+    'Implemented',
+    'Admins can create tenant users, assign roles, reset temporary passwords, enable or disable accounts, and enforce password changes.',
+  ],
+  [
+    'Change Password',
+    'Implemented',
+    'Authenticated users can change their password securely. Other active sessions are revoked after password change.',
+  ],
+  [
+    'Invite-only Sign-up',
+    'Implemented',
+    'Public self-registration is disabled. Admins generate invite links with role assignment and expiry dates.',
+  ],
+  [
+    'Account Request Approval',
+    'Implemented',
+    'Users can request access. Admins review, approve or reject requests, assign roles, set expiry dates, and generate invite links.',
+  ],
+  [
+    'Invite Governance',
+    'Implemented',
+    'Pending, accepted, expired, and revoked invite states are visible in User Management with revoke workflow for pending invites.',
+  ],
+  [
+    'Security Event Viewer',
+    'Implemented',
+    'Security events show login successes, login failures, RBAC denials, user changes, invites, account requests, password resets, and rate-limit events.',
+  ],
+  [
+    'Same-Origin POST Protection',
+    'Implemented',
+    'Sensitive POST APIs validate same-origin requests to reduce CSRF risk across user management, invites, password changes, and secure API wrapper routes.',
+  ],
+  [
+    'API Protection',
+    'Implemented',
+    'Secure API wrapper enforces auth, RBAC, Zod validation, rate limits, safe errors, same-origin checks, and denied-request events.',
+  ],
+  [
+    'Tenant Isolation',
+    'Implemented',
+    'Sensitive reads and updates use tenantId from session context and reject cross-tenant IDOR paths. PostgreSQL RLS remains an enterprise enhancement.',
+  ],
+  [
+    'Security Headers',
+    'Implemented',
+    'next.config.mjs applies CSP, HSTS, frame denial, MIME sniffing protection, referrer policy, and permissions policy.',
+  ],
+  [
+    'Rate Limiting',
+    'Implemented',
+    'Hybrid limiter uses Upstash Redis REST when configured and falls back to local memory for demos.',
+  ],
+  [
+    'Audit Logging',
+    'Implemented',
+    'Persistent audit events include hash-chain integrity fields for tamper-evident review.',
+  ],
+  [
+    'Audit Integrity',
+    'Implemented',
+    'Audit logs are hash-chained with previousHash and integrityHash to detect tampering.',
+  ],
+  [
+    'Offline Bundle Safety',
+    'Implemented foundation',
+    'Uploads are staged only, metadata and magic bytes are validated, optional RSA signatures are checked, and imports never auto-apply.',
+  ],
+  [
+    'Vercel Hardening',
+    'Partially implemented',
+    'Environment variables, security headers, production/preview separation, and Vercel firewall/WAF settings are prepared for production deployment.',
+  ],
+  [
+    'Secrets Hygiene',
+    'Implemented baseline',
+    'No secrets are committed; .env and .env.local remain ignored. NEXT_PUBLIC is avoided for sensitive values.',
+  ],
+  [
+    'Testing Pack',
+    'Documented',
+    'Manual and automated test plans cover auth, RBAC, tenant isolation, headers, rate limits, invites, account requests, and offline bundle staging.',
+  ],
+  [
+    'Tenant/User Workspace',
+    'Implemented foundation',
+    'Tenant and user posture pages provide workspace isolation evidence for commercial pilots.',
+  ],
+  [
+    'PostgreSQL RLS',
+    'Planned enterprise enhancement',
+    'DBA-reviewed RLS SQL template is included but intentionally not auto-enabled until tenant-context staging tests pass.',
+  ],
 ] as const;
 
 function badge(status: string) {
@@ -48,11 +139,10 @@ export default async function SecurityPage() {
         </div>
 
         <div>
-          <p className="text-sm text-muted-foreground">Phase 8-10 Security Hardening</p>
-          <h1 className="text-3xl font-bold">Security, Deployment & Commercial Checklist</h1>
+        <p className="text-sm text-muted-foreground">Phase 8-15 Security Hardening</p>          <h1 className="text-3xl font-bold">Security, Deployment & Commercial Checklist</h1>
           <p className="mt-2 max-w-4xl text-muted-foreground">
-            Enterprise security controls for authentication, authorization, protected APIs, tenant isolation,
-            offline bundle safety, Vercel hardening, and commercial pilot readiness.
+          Enterprise security controls for authentication, RBAC, protected APIs, user lifecycle governance,
+          invite-only access, account approval, tenant isolation, audit integrity, and commercial pilot readiness.
           </p>
         </div>
 
