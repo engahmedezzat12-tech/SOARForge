@@ -126,8 +126,7 @@ function badge(status: string) {
 
 export default async function SecurityPage() {
   const session = await requireSession();
-  if (!hasPermission(session.role, 'security.read')) redirect('/sign-in');
-
+  if (!hasPermission(session.role, 'security.read')) redirect('/access-denied');
   return (
     <main className="min-h-screen bg-background p-8 text-foreground">
       <div className="mx-auto max-w-7xl space-y-6">

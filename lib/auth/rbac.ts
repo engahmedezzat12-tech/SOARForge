@@ -48,7 +48,7 @@ export const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
   SOC_MANAGER: ['admin.read', 'validation.read', 'validation.update', 'audit.read', 'knowledge.read', 'export.create'],
   SOC_ENGINEER: ['validation.read', 'validation.update', 'knowledge.read', 'export.create'],
   AUDITOR: ['admin.read', 'validation.read', 'audit.read', 'security.read'],
-  VIEWER: ['admin.read', 'validation.read'],
+  VIEWER: ['validation.read'],
 };
 
 export function hasPermission(role: Role, permission: Permission): boolean {

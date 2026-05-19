@@ -49,7 +49,7 @@ function SummaryCard({
 
 export default async function ValidationPage() {
   const session = await requireSession();
-  if (!hasPermission(session.role, 'validation.read')) redirect('/sign-in');
+  if (!hasPermission(session.role, 'validation.read')) redirect('/access-denied');
 
   const snapshot = await getDatabaseSnapshot(session.tenantId);
   const readiness = await summarizeDatabaseReadiness(session.tenantId);

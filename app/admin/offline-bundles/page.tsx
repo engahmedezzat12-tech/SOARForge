@@ -12,8 +12,7 @@ export const revalidate = 0;
 
 export default async function OfflineBundlesPage() {
   const session = await requireSession();
-  if (!hasPermission(session.role, 'offline_bundle.upload')) redirect('/sign-in');
-
+  if (!hasPermission(session.role, 'offline_bundle.upload')) redirect('/access-denied');
   const imports = await prisma.offlineBundleImport.findMany({
     where: { tenantId: session.tenantId },
     orderBy: { createdAt: 'desc' },
