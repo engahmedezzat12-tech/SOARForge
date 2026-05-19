@@ -6,7 +6,7 @@ import { prisma } from '@/lib/db/prisma';
 import { requireSession } from '@/lib/auth/session';
 import { hasPermission } from '@/lib/auth/rbac';
 import { recordSecurityEvent } from '@/lib/product-core/security-events';
-
+import { assertSameOrigin } from '@/lib/security/origin-protection';
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
