@@ -3,9 +3,11 @@ import { redirect } from 'next/navigation';
 
 import { SignOutButton } from '@/components/sign-out-button';
 import { AdminUsersManager } from '@/components/admin-users-manager';
+import { AccountRequestsManager } from '@/components/account-requests-manager';
 import { hasPermission } from '@/lib/auth/rbac';
 import { requireSession } from '@/lib/auth/session';
 import { prisma } from '@/lib/db/prisma';
+import { AdminInvitesManager } from '@/components/admin-invites-manager';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -16,7 +18,16 @@ export default async function UsersPage() {
   if (!hasPermission(session.role, 'user.manage')) {
     redirect('/access-denied');
   }
-
+  const accountRequests = await prisma.accountRequest.findMany({
+    where: { tenantId: session.tenantId },
+    orderBy: { createdAt: 'desc' },
+    take: 50,
+  });
+  const invites = await prisma.userInvite.findMany({
+    where: { tenantId: session.tenantId },
+    orderBy: { createdAt: 'desc' },
+    take: 50,
+  });
   const users = await prisma.user.findMany({
     where: { tenantId: session.tenantId },
     orderBy: { createdAt: 'asc' },
@@ -46,7 +57,27 @@ export default async function UsersPage() {
     mustChangePassword: user.mustChangePassword,
     createdAt: user.createdAt.toISOString(),
   }));
-
+  const serializedRequests = accountRequests.map((request) => ({
+    id: request.id,
+    email: request.email,
+    name: request.name,
+    reason: request.reason,
+    status: request.status,
+    approvedRole: request.approvedRole,
+    inviteLink: request.inviteLink,
+    expiresAt: request.expiresAt?.toISOString() ?? null,
+    reviewedAt: request.reviewedAt?.toISOString() ?? null,
+    createdAt: request.createdAt.toISOString(),
+  }));
+  const serializedInvites = invites.map((invite) => ({
+    id: invite.id,
+    email: invite.email,
+    name: invite.name,
+    role: invite.role,
+    acceptedAt: invite.acceptedAt?.toISOString() ?? null,
+    expiresAt: invite.expiresAt.toISOString(),
+    createdAt: invite.createdAt.toISOString(),
+  }));
   return (
     <main className="min-h-screen bg-background p-8 text-foreground">
       <div className="mx-auto max-w-7xl space-y-6">
@@ -67,6 +98,30 @@ export default async function UsersPage() {
         </div>
 
         <AdminUsersManager users={serializedUsers} />
+
+<div className="rounded-xl border border-border bg-card/40 p-5">
+  <div className="mb-5">
+    <p className="text-sm text-muted-foreground">Access Governance</p>
+    <h2 className="text-2xl font-bold">Account Requests</h2>
+    <p className="mt-2 text-sm text-muted-foreground">
+      Review access requests, approve users, assign roles, set invite expiry dates, or reject requests.
+    </p>
+  </div>
+
+  <AccountRequestsManager requests={serializedRequests} />
+</div>
+
+<div className="rounded-xl border border-border bg-card/40 p-5">
+  <div className="mb-5">
+    <p className="text-sm text-muted-foreground">Invite Governance</p>
+    <h2 className="text-2xl font-bold">Pending / Accepted / Expired Invites</h2>
+    <p className="mt-2 text-sm text-muted-foreground">
+      Review generated invite links, expiry dates, acceptance state, and revoke pending invites.
+    </p>
+  </div>
+
+  <AdminInvitesManager invites={serializedInvites} />
+</div>
       </div>
     </main>
   );
