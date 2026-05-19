@@ -31,8 +31,8 @@ function actionBadge(action: string) {
 
 export default async function AuditPage() {
   const session = await requireSession();
-  if (!hasPermission(session.role, 'audit.read')) redirect('/sign-in');
-
+  if (!hasPermission(session.role, 'audit.read')) redirect('/access-denied');
+  
   const snapshot = await getDatabaseSnapshot(session.tenantId);
   const integrity = await verifyAuditHashChain(session.tenantId);
 
