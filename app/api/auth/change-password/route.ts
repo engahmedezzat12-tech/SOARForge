@@ -8,7 +8,6 @@ import { recordSecurityEvent, SecurityEvents } from '@/lib/product-core/security
 import { assertSameOrigin } from '@/lib/security/origin-protection';
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
-
 const ChangePasswordSchema = z
   .object({
     currentPassword: z.string().min(1).max(500),
@@ -27,11 +26,10 @@ const ChangePasswordSchema = z
 export async function POST(request: Request) {
     const originError = assertSameOrigin(request);
     if (originError) return originError;
-  const session = await getCurrentSession();
 
-  if (!session) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+    const session = await requireSession();
+
+ 
 
   const body = await request.json().catch(() => undefined);
   const parsed = ChangePasswordSchema.safeParse(body);

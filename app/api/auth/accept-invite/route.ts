@@ -5,7 +5,7 @@ import crypto from 'crypto';
 import { prisma } from '@/lib/db/prisma';
 import { hashPassword } from '@/lib/auth/password';
 import { recordSecurityEvent } from '@/lib/product-core/security-events';
-
+import { assertSameOrigin } from '@/lib/security/origin-protection';
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
