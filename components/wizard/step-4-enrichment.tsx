@@ -55,7 +55,7 @@ export default function Step4Enrichment() {
     }));
   };
 
-  const visibleConnectorKeys = new Set(getVisibleConnectorKeys(playbook));
+  const visibleConnectorKeys = new Set(getVisibleConnectorKeys(playbook, ['enrichment', 'hunt']));
   const connectors = getConnectorEntries().filter((c) => visibleConnectorKeys.has(c.id));
   const selectedConnectors = connectors.filter((connector) =>
     playbook.enrichmentConnectors.includes(connector.id)

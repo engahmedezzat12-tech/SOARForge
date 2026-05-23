@@ -1,50 +1,44 @@
 import type { PlaybookState } from '@/lib/soar-types';
 import { FORTISOAR_ACTION_REGISTRY, FORTISOAR_CONNECTOR_TEMPLATES, getRequiredConnectorsForActions } from '@/lib/fortisoar-action-registry';
 
-export type CapabilityCategory = 'endpoint' | 'identity' | 'threat_intel' | 'network' | 'email' | 'notification' | 'ticketing' | 'sandbox' | 'siem';
+export type CapabilityKind = 'enrichment' | 'hunt' | 'response_action' | 'notification' | 'ticketing';
 
-const TEMPLATE_CAPABILITY_MAP: Record<string, CapabilityCategory[]> = {
-  ransomware: ['endpoint', 'identity', 'threat_intel', 'notification', 'sandbox'],
-  waf_attack: ['network', 'threat_intel', 'notification', 'ticketing'],
-  phishing: ['email', 'threat_intel', 'notification', 'identity'],
-  suspicious_login: ['identity', 'threat_intel', 'notification'],
-  malware_hash: ['endpoint', 'threat_intel', 'notification', 'sandbox'],
-  malicious_ip: ['network', 'threat_intel', 'notification'],
-  vulnerability: ['ticketing', 'notification'],
-  ticket_automation: ['ticketing', 'notification'],
-  threat_intel: ['threat_intel', 'notification', 'siem'],
+const CONNECTOR_KIND_MAP: Record<string, CapabilityKind[]> = {
+  abuseipdb: ['enrichment', 'hunt'],
+  virustotal: ['enrichment', 'hunt'],
+  fortiguard: ['enrichment', 'hunt'],
+  misp: ['enrichment', 'hunt'],
+  qradar: ['hunt'],
+  splunk: ['hunt'],
+  microsoft_sentinel: ['hunt'],
+  microsoft_teams: ['notification'],
+  slack: ['notification'],
+  servicenow: ['ticketing'],
+  jira: ['ticketing'],
 };
 
-const CONNECTOR_TO_CAPABILITY: Record<string, CapabilityCategory> = {
-  groupib_edr: 'endpoint', crowdstrike_edr: 'endpoint', microsoft_defender: 'endpoint', sentinelone: 'endpoint',
-  active_directory: 'identity', azure_ad: 'identity',
-  qradar: 'siem', splunk: 'siem', microsoft_sentinel: 'siem',
-  abuseipdb: 'threat_intel', virustotal: 'threat_intel', fortiguard: 'threat_intel', misp: 'threat_intel',
-  palo_alto_firewall: 'network', fortigate_firewall: 'network',
-  exchange: 'email', proofpoint: 'email',
-  microsoft_teams: 'notification', slack: 'notification',
-  servicenow: 'ticketing', jira: 'ticketing',
-  fortisandbox: 'sandbox',
-};
-
-function allowedCapabilities(playbook: PlaybookState): Set<CapabilityCategory> {
-  const key = playbook.templateId || playbook.generatorType || '';
-  return new Set(TEMPLATE_CAPABILITY_MAP[key] ?? Object.values(CONNECTOR_TO_CAPABILITY));
+function getActionKinds(actionId: string, connectorKey: string): CapabilityKind[] {
+  if (connectorKey === 'microsoft_teams' || connectorKey === 'slack') return ['notification'];
+  if (connectorKey === 'servicenow' || connectorKey === 'jira') return ['ticketing'];
+  if (/lookup|search|query|sandbox|reputation|intel|duplicate/i.test(actionId)) return ['enrichment', 'hunt'];
+  return ['response_action'];
 }
 
-export function getVisibleConnectorKeys(playbook: PlaybookState): string[] {
-  const caps = allowedCapabilities(playbook);
-  return Object.keys(FORTISOAR_CONNECTOR_TEMPLATES).filter((k) => caps.has(CONNECTOR_TO_CAPABILITY[k]));
+export function getVisibleConnectorKeys(playbook: PlaybookState, forKinds?: CapabilityKind[]): string[] {
+  const requested = new Set(forKinds ?? ['enrichment', 'hunt', 'response_action', 'notification', 'ticketing']);
+  return Object.keys(FORTISOAR_CONNECTOR_TEMPLATES).filter((key) => (CONNECTOR_KIND_MAP[key] ?? []).some((k) => requested.has(k)));
 }
 
-export function getVisibleActionIds(playbook: PlaybookState): string[] {
-  const caps = allowedCapabilities(playbook);
-  return FORTISOAR_ACTION_REGISTRY.filter((a) => caps.has(CONNECTOR_TO_CAPABILITY[a.connectorKey])).map((a) => a.actionId);
+export function getVisibleActionIds(playbook: PlaybookState, forKinds?: CapabilityKind[]): string[] {
+  const requested = new Set(forKinds ?? ['enrichment', 'hunt', 'response_action', 'notification', 'ticketing']);
+  return FORTISOAR_ACTION_REGISTRY
+    .filter((a) => getActionKinds(a.actionId, a.connectorKey).some((k) => requested.has(k)))
+    .map((a) => a.actionId);
 }
 
 export function cleanupSelectionsByContract(playbook: PlaybookState): PlaybookState {
-  const visibleConnectors = new Set(getVisibleConnectorKeys(playbook));
-  const visibleActions = new Set(getVisibleActionIds(playbook));
+  const visibleConnectors = new Set(getVisibleConnectorKeys(playbook, ['enrichment', 'hunt']));
+  const visibleActions = new Set(getVisibleActionIds(playbook, ['response_action', 'notification', 'ticketing']));
   return {
     ...playbook,
     enrichmentConnectors: (playbook.enrichmentConnectors || []).filter((c) => visibleConnectors.has(c)),
@@ -54,17 +48,13 @@ export function cleanupSelectionsByContract(playbook: PlaybookState): PlaybookSt
 
 export function validateCapabilityContract(playbook: PlaybookState): string[] {
   const errors: string[] = [];
-  const visibleConnectors = new Set(getVisibleConnectorKeys(playbook));
-  const visibleActions = new Set(getVisibleActionIds(playbook));
+  const visibleConnectors = new Set(getVisibleConnectorKeys(playbook, ['enrichment', 'hunt']));
+  const visibleActions = new Set(getVisibleActionIds(playbook, ['response_action', 'notification', 'ticketing']));
   const invalidConnectors = (playbook.enrichmentConnectors || []).filter((c) => !visibleConnectors.has(c));
   const invalidActions = (playbook.actions || []).filter((a) => !visibleActions.has(a));
   if (invalidConnectors.length) errors.push(`Unavailable enrichment connectors selected: ${invalidConnectors.join(', ')}`);
   if (invalidActions.length) errors.push(`Unavailable actions selected: ${invalidActions.join(', ')}`);
 
-  const actionRequiredConnectors = getRequiredConnectorsForActions(playbook.actions || []);
-  const unselectedButRequired = actionRequiredConnectors.filter((k) => !playbook.enrichmentConnectors.includes(k));
-  if (unselectedButRequired.length) {
-    errors.push(`Required connectors for selected actions are not selected in Step 4: ${unselectedButRequired.join(', ')}`);
-  }
+  void getRequiredConnectorsForActions;
   return errors;
 }

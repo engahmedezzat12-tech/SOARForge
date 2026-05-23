@@ -60,7 +60,7 @@ export default function Step6Actions() {
     }));
   };
 
-  const visibleActionIds = new Set(getVisibleActionIds(playbook));
+  const visibleActionIds = new Set(getVisibleActionIds(playbook, ['response_action', 'notification', 'ticketing']));
   const registryActions = getRegistryActions().filter((a) => visibleActionIds.has(a.actionId));
   const selectedActions = registryActions.filter((action) => playbook.actions.includes(action.actionId));
   const availableActions = registryActions.filter((action) => !playbook.actions.includes(action.actionId));
