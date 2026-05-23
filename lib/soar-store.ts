@@ -5,7 +5,7 @@ import { v4 as uuidv4 } from 'uuid';
 import type { PlaybookState, ScoringModel } from './soar-types';
 import type { FortiSOARDeploymentProfile, FortiSOARReadinessCheck, FortiSOARPlaybookStatus } from './fortisoar-types';
 import type { SoarPlatformId } from './soar-platforms';
-import { buildConnectorConfig, buildConnectorsForTemplate } from './fortisoar-action-registry';
+import { buildConnectorConfig, buildConnectorsForTemplate, getRequiredConnectorsForActions } from './fortisoar-action-registry';
 import { autoFillMissingFields, getRequiredConnectorsForTemplate } from './template-utils';
 import { PLAYBOOK_TEMPLATES } from './soar-templates';
 import { isConfiguredForImport, isFakeValue, isPlaceholder } from './fortisoar-workflow-generator';
@@ -153,8 +153,25 @@ export const useSoarStore = create<SoarStore>((set, get) => ({
   fortisoarStatus: 'draft',
   connectorModal: { open: false },
 
-  setPlaybook: (playbook) =>
-    set({ playbook: { ...playbook, updatedAt: new Date().toISOString() } }),
+  setPlaybook: (playbook) => {
+    const currentProfile = get().deploymentProfile;
+    const requiredActionConnectors = getRequiredConnectorsForActions(playbook.actions ?? []);
+    const requiredConnectorKeys = Array.from(new Set([...(playbook.enrichmentConnectors ?? []), ...requiredActionConnectors]));
+
+    const mergedConnectors = requiredConnectorKeys.reduce<typeof currentProfile.connectors>((acc, connectorKey) => {
+      acc[connectorKey] = currentProfile.connectors[connectorKey] ?? buildConnectorConfig(connectorKey);
+      return acc;
+    }, {});
+
+    set({
+      playbook: { ...playbook, updatedAt: new Date().toISOString() },
+      deploymentProfile: {
+        ...currentProfile,
+        connectors: mergedConnectors,
+        updatedAt: new Date().toISOString(),
+      },
+    });
+  },
 
   setCurrentStep: (step) => set({ currentStep: step }),
 
