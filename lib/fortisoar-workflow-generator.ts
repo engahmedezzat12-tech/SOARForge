@@ -2361,6 +2361,21 @@ function buildAugmentedTemplateWorkflow(playbook: PlaybookState, profile: FortiS
 
   const steps = workflow.steps || [];
   const stepNames = new Set(steps.map((s) => s.name));
+  const getStepMeta = (step: FortiSOARStep): { actionId?: string } | undefined =>
+    (step.arguments as Record<string, unknown>)?.__soarforge_meta as { actionId?: string } | undefined;
+  const findExistingStepsForAction = (actionId: string): FortiSOARStep[] => {
+    const action = getActionById(actionId);
+    if (!action) return [];
+    const byMeta = steps.filter((s) => getStepMeta(s)?.actionId === actionId);
+    if (byMeta.length > 0) return byMeta;
+    const byConnectorOp = steps.filter((s) => {
+      const args = s.arguments as Partial<FortiSOARConnectorArguments>;
+      return args.connector === action.connector && args.operation === action.operation;
+    });
+    if (byConnectorOp.length > 0) return byConnectorOp;
+    const connectorStepName = action.displayName.replace(/\s+/g, "_");
+    return steps.filter((s) => s.name === connectorStepName);
+  };
   const unsupportedEnrichments: Array<{ key: string; reason: string }> = [];
   const unsupportedActions: Array<{ key: string; reason: string }> = [];
   const generatedEnrichments = new Set<string>();
@@ -2397,8 +2412,7 @@ function buildAugmentedTemplateWorkflow(playbook: PlaybookState, profile: FortiS
       (isEnrichment ? unsupportedEnrichments : unsupportedActions).push({ key: sourceKey, reason: `Action '${actionId}' not found in registry.` });
       return;
     }
-    const connectorStepName = action.displayName.replace(/\s+/g, "_");
-    if (stepNames.has(connectorStepName)) {
+    if (findExistingStepsForAction(actionId).length > 0) {
       (isEnrichment ? generatedEnrichments : generatedActions).add(sourceKey);
       return;
     }
@@ -2423,15 +2437,14 @@ function buildAugmentedTemplateWorkflow(playbook: PlaybookState, profile: FortiS
   }
 
   const hasConnectedPathForActionId = (actionId: string): boolean => {
-    const action = getActionById(actionId);
-    if (!action) return false;
-    const stepName = action.displayName.replace(/\s+/g, "_");
-    const step = steps.find((s) => s.name === stepName);
-    if (!step) return false;
-    const stepIri = `/api/3/workflow_steps/${step.uuid}`;
-    const hasInbound = routes.some((r) => r.targetStep === stepIri);
-    const hasOutbound = routes.some((r) => r.sourceStep === stepIri);
-    return hasInbound && (hasOutbound || step.name === "Finalize");
+    const matched = findExistingStepsForAction(actionId);
+    if (matched.length === 0) return false;
+    return matched.some((step) => {
+      const stepIri = `/api/3/workflow_steps/${step.uuid}`;
+      const hasInbound = routes.some((r) => r.targetStep === stepIri);
+      const hasOutbound = routes.some((r) => r.sourceStep === stepIri);
+      return hasInbound && (hasOutbound || step.name === "Finalize");
+    });
   };
 
   const missingEnrichmentSteps = (playbook.enrichmentConnectors || []).filter((key) => {
@@ -2646,10 +2659,15 @@ function validateGeneratedWorkflowStructure(collection: FortiSOARWorkflowCollect
   const dynamicByCapability = new Map<string, FortiSOARStep[]>();
   const connectorOpIndex = new Map<string, FortiSOARStep[]>();
   const enrichmentConnectorFallback: Record<string, Array<{ connector: string; operation: string }>> = {
-    abuseipdb: [{ connector: "abuseipdb", operation: "ip_reputation_check" }],
-    virustotal: [{ connector: "virustotal", operation: "ip_reputation" }, { connector: "virustotal", operation: "hash_reputation" }, { connector: "virustotal", operation: "url_reputation" }, { connector: "virustotal", operation: "domain_reputation" }],
-    fortiguard: [{ connector: "fortiguard", operation: "url_lookup" }],
-    qradar: [{ connector: "qradar", operation: "aql_search" }],
+    abuseipdb: [{ connector: "abuseipdb", operation: "ip_lookup" }],
+    virustotal: [
+      { connector: "virustotal", operation: "get_ip_report" },
+      { connector: "virustotal", operation: "get_url_report" },
+      { connector: "virustotal", operation: "get_file_report" },
+      { connector: "virustotal", operation: "get_domain_report" },
+    ],
+    fortiguard: [{ connector: "fortiguard", operation: "lookup_url" }],
+    qradar: [{ connector: "qradar", operation: "run_aql_query" }],
   };
   for (const step of workflow.steps) {
     const args = step.arguments as Record<string, unknown>;
