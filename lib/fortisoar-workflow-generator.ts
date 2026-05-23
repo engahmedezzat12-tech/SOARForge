@@ -2199,7 +2199,7 @@ export function generateFortiSOARWorkflowCollection(
   const collectionUuid = generateUUID();
   const timestamp = Math.floor(Date.now() / 1000);
 
-  const { workflow, coverage } = buildFortiSOARWorkflowFromPlan(playbook, profile, collectionUuid);
+  const { workflow, coverage } = buildAugmentedTemplateWorkflow(playbook, profile, collectionUuid);
 
   workflow.collection = `/api/3/workflow_collections/${collectionUuid}`;
 
@@ -2232,74 +2232,71 @@ export function generateFortiSOARWorkflowCollection(
   return { type: "workflow_collections", data: [collectionData], exported_tags: [] };
 }
 
-function buildFortiSOARWorkflowPlan(playbook: PlaybookState): WorkflowPlanNode[] {
+function buildAugmentedTemplateWorkflow(playbook: PlaybookState, profile: FortiSOARDeploymentProfile, collectionUuid: string): { workflow: FortiSOARWorkflow; coverage: WorkflowCoverageReport } {
   const enrichmentActionMap: Record<string, string> = {
-    virustotal: "lookup_virustotal_url",
-    abuseipdb: "lookup_abuseipdb_ip",
+    virustotal: "virustotal_ip_lookup",
+    abuseipdb: "abuseipdb_lookup",
     qradar: "qradar_aql_search",
-    fortiguard: "lookup_fortiguard_url",
+    fortiguard: "fortiguard_url_lookup",
   };
-  const nodes: WorkflowPlanNode[] = [
-    { id: "identity", label: "Identity_Metadata", type: "set_variable", args: { playbook_name: playbook.name || "", playbook_description: playbook.description || "" } },
-    { id: "trigger", label: "Trigger_Context", type: "set_variable", args: { trigger_type: playbook.trigger?.type || "", trigger_source: playbook.trigger?.sourceSystem || "" } },
-    { id: "entities", label: "Entity_Extraction", type: "set_variable", args: { entities: (playbook.entities || []).join(",") } },
-  ];
-  for (const key of playbook.enrichmentConnectors || []) {
-    nodes.push({ id: `enrich_${key}`, label: `Enrich_${key}`, type: "connector", connectorKey: key, actionId: enrichmentActionMap[key] });
-  }
-  nodes.push({ id: "scoring", label: "Scoring", type: "set_variable", args: { scoring_model: String(playbook.scoringModel?.type || "") } });
-  for (const actionId of playbook.actions || []) {
-    nodes.push({ id: `action_${actionId}`, label: `Action_${actionId}`, type: "connector", actionId });
-  }
-  nodes.push(
-    { id: "fallback", label: "Fallback", type: "set_variable", args: { fallback_escalation: playbook.fallbackProcedure?.escalationPath || "", fallback_manual_steps: playbook.fallbackProcedure?.manualSteps || "" } },
-    { id: "testing", label: "Testing_UAT_Metadata", type: "set_variable", args: { test_scenarios: playbook.testingPlan?.scenarios || "" } },
-    { id: "approval", label: "Approval_Gate", type: "approval" },
-    { id: "readiness", label: "Readiness_Profile_Connectors", type: "set_variable", args: { required_connectors: getMergedRequiredConnectorKeys(playbook).join(",") } },
-  );
-  return nodes;
-}
+  const tid = playbook.templateId || playbook.generatorType || "custom";
+  const workflow = ({
+    ransomware: generateRansomwareWorkflow,
+    waf_attack: generateWAFWorkflow,
+    phishing: generatePhishingWorkflow,
+    suspicious_login: generateSuspiciousLoginWorkflow,
+    malware_hash: generateMalwareHashWorkflow,
+    malicious_ip: generateMaliciousIPWorkflow,
+    vulnerability: generateVulnerabilityWorkflow,
+    ticket_automation: generateTicketAutomationWorkflow,
+    threat_intel: generateThreatIntelWorkflow,
+    custom: generateCustomWorkflow,
+  }[tid] || generateCustomWorkflow)(playbook, profile);
 
-function buildFortiSOARWorkflowFromPlan(playbook: PlaybookState, profile: FortiSOARDeploymentProfile, collectionUuid: string): { workflow: FortiSOARWorkflow; coverage: WorkflowCoverageReport } {
-  const plan = buildFortiSOARWorkflowPlan(playbook);
-  const steps: FortiSOARStep[] = [];
-  const routes: FortiSOARRoute[] = [];
-  const pos = calculateStepPositions(Math.max(plan.length + 2, 16));
-  const trigger = buildTriggerStep(playbook, pos[0]);
-  steps.push(trigger);
-  let prev = trigger;
-  let i = 1;
-  const generatedEnrichments = new Set<string>();
-  const generatedActions = new Set<string>();
+  const steps = workflow.steps || [];
+  const stepNames = new Set(steps.map((s) => s.name));
   const unsupportedEnrichments: Array<{ key: string; reason: string }> = [];
   const unsupportedActions: Array<{ key: string; reason: string }> = [];
-  for (const node of plan) {
-    let step: FortiSOARStep | null = null;
-    if (node.type === "set_variable") step = buildSetVarStep(node.label, node.args || {}, pos[i++]);
-    if (node.type === "approval") step = buildApproval(node.label, "Approval required", generateUUID(), generateUUID(), profile.approvalTeamIri, profile.approvalTeamName, pos[i++]);
-    if (node.type === "connector") {
-      if (!node.actionId) {
-        if (node.connectorKey) unsupportedEnrichments.push({ key: node.connectorKey, reason: "No mapped FortiSOAR operation in registry." });
-      } else {
-        const action = getActionById(node.actionId);
-        if (!action) {
-          if (node.connectorKey) unsupportedEnrichments.push({ key: node.connectorKey, reason: `Action '${node.actionId}' not found.` });
-          else unsupportedActions.push({ key: node.actionId, reason: "Action not found in registry." });
-        } else {
-          const cfg = profile.connectors[action.connectorKey] || buildConnectorConfig(action.connectorKey);
-          step = buildConnector(node.actionId, cfg, pos[i++]);
-          if (node.connectorKey) generatedEnrichments.add(node.connectorKey); else generatedActions.add(node.actionId);
-        }
-      }
+  const generatedEnrichments = new Set<string>();
+  const generatedActions = new Set<string>();
+  const insertPos = calculateStepPositions(steps.length + 10);
+  let pi = steps.length;
+  const finalizeStep = steps.find((s) => s.name === "Finalize");
+  const routeToFinalize = workflow.routes?.find((r) => finalizeStep && r.targetStep.endsWith(`/${finalizeStep.uuid}`));
+  let prevStep = routeToFinalize ? steps.find((s) => routeToFinalize.sourceStep.endsWith(`/${s.uuid}`)) || steps[steps.length - 1] : steps[steps.length - 1];
+
+  const appendActionIfMissing = (actionId: string, isEnrichment: boolean, sourceKey: string): void => {
+    const action = getActionById(actionId);
+    if (!action) {
+      (isEnrichment ? unsupportedEnrichments : unsupportedActions).push({ key: sourceKey, reason: `Action '${actionId}' not found in registry.` });
+      return;
     }
-    if (!step) continue;
-    steps.push(step);
-    routes.push(buildRoute(prev.name, step.name, prev.uuid, step.uuid));
-    prev = step;
+    const connectorStepName = action.displayName.replace(/\s+/g, "_");
+    if (stepNames.has(connectorStepName)) {
+      (isEnrichment ? generatedEnrichments : generatedActions).add(sourceKey);
+      return;
+    }
+    const cfg = profile.connectors[action.connectorKey] || buildConnectorConfig(action.connectorKey);
+    const newStep = buildConnector(actionId, cfg, insertPos[Math.min(pi++, insertPos.length - 1)]);
+    if (!newStep) return;
+    steps.push(newStep);
+    stepNames.add(newStep.name);
+    if (prevStep) workflow.routes.push(buildRoute(prevStep.name, newStep.name, prevStep.uuid, newStep.uuid));
+    prevStep = newStep;
+    (isEnrichment ? generatedEnrichments : generatedActions).add(sourceKey);
+  };
+
+  for (const key of playbook.enrichmentConnectors || []) {
+    const mapped = enrichmentActionMap[key];
+    if (!mapped) unsupportedEnrichments.push({ key, reason: "No mapped FortiSOAR operation in registry." });
+    else appendActionIfMissing(mapped, true, key);
   }
-  const missingEnrichmentSteps = (playbook.enrichmentConnectors || []).filter((k) => !generatedEnrichments.has(k)).filter((k) => !unsupportedEnrichments.some((u) => u.key === k));
-  const missingActionSteps = (playbook.actions || []).filter((a) => !generatedActions.has(a)).filter((a) => !unsupportedActions.some((u) => u.key === a));
-  return { workflow: makeWorkflow(playbook, trigger, steps, routes, collectionUuid), coverage: { unsupportedEnrichments, unsupportedActions, missingEnrichmentSteps, missingActionSteps, passed: missingEnrichmentSteps.length === 0 && missingActionSteps.length === 0 } };
+  for (const actionId of playbook.actions || []) appendActionIfMissing(actionId, false, actionId);
+
+  const missingEnrichmentSteps = (playbook.enrichmentConnectors || []).filter((k) => !generatedEnrichments.has(k) && !unsupportedEnrichments.some((u) => u.key === k));
+  const missingActionSteps = (playbook.actions || []).filter((a) => !generatedActions.has(a) && !unsupportedActions.some((u) => u.key === a));
+  workflow.collection = `/api/3/workflow_collections/${collectionUuid}`;
+  return { workflow, coverage: { unsupportedEnrichments, unsupportedActions, missingEnrichmentSteps, missingActionSteps, passed: missingEnrichmentSteps.length === 0 && missingActionSteps.length === 0 } };
 }
 
 // ============================================================================
