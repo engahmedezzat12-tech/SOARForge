@@ -8,7 +8,7 @@ import type { SoarPlatformId } from './soar-platforms';
 import { buildConnectorConfig, buildConnectorsForTemplate } from './fortisoar-action-registry';
 import { autoFillMissingFields, getRequiredConnectorsForTemplate } from './template-utils';
 import { PLAYBOOK_TEMPLATES } from './soar-templates';
-import { isConfiguredForImport, isFakeValue, isPlaceholder } from './fortisoar-workflow-generator';
+import { isConfiguredForImport, isFakeValue, isPlaceholder, normalizeDeploymentProfileForSelections } from './fortisoar-workflow-generator';
 
 const EMPTY_SCORING_MODEL: ScoringModel = {
   type: '',
@@ -153,8 +153,15 @@ export const useSoarStore = create<SoarStore>((set, get) => ({
   fortisoarStatus: 'draft',
   connectorModal: { open: false },
 
-  setPlaybook: (playbook) =>
-    set({ playbook: { ...playbook, updatedAt: new Date().toISOString() } }),
+  setPlaybook: (playbook) => {
+    const currentProfile = get().deploymentProfile;
+    const normalizedProfile = normalizeDeploymentProfileForSelections(currentProfile, playbook);
+
+    set({
+      playbook: { ...playbook, updatedAt: new Date().toISOString() },
+      deploymentProfile: normalizedProfile,
+    });
+  },
 
   setCurrentStep: (step) => set({ currentStep: step }),
 
