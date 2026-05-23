@@ -24,6 +24,15 @@ export interface FortiSOARWorkflowCollectionData {
   importedBy: string[];
   recordTags: string[];
   workflows: FortiSOARWorkflow[];
+  unsupportedWorkflowCoverage?: {
+    enrichments: Array<{ key: string; reason: string }>;
+    actions: Array<{ key: string; reason: string }>;
+  };
+  workflowCoverageValidation?: {
+    missingEnrichmentSteps: string[];
+    missingActionSteps: string[];
+    passed: boolean;
+  };
 }
 
 export interface FortiSOARWorkflow {

@@ -22,6 +22,22 @@ import {
   getRequiredConnectorsForActions,
 } from "./fortisoar-action-registry";
 import type { PlaybookState } from "./soar-types";
+interface WorkflowPlanNode {
+  id: string;
+  label: string;
+  type: "set_variable" | "connector" | "approval";
+  actionId?: string;
+  connectorKey?: string;
+  args?: Record<string, string>;
+}
+
+interface WorkflowCoverageReport {
+  unsupportedEnrichments: Array<{ key: string; reason: string }>;
+  unsupportedActions: Array<{ key: string; reason: string }>;
+  missingEnrichmentSteps: string[];
+  missingActionSteps: string[];
+  passed: boolean;
+}
 
 // ============================================================================
 // UUID Generator
@@ -2183,46 +2199,7 @@ export function generateFortiSOARWorkflowCollection(
   const collectionUuid = generateUUID();
   const timestamp = Math.floor(Date.now() / 1000);
 
-  let workflow: FortiSOARWorkflow;
-
-  // Route strictly — never generate ransomware for non-ransomware templates
-  switch (playbook.templateId || playbook.generatorType) {
-    case "ransomware":
-      workflow = generateRansomwareWorkflow(playbook, profile);
-      break;
-    case "waf_attack":
-    case "vuln_exploit":
-      workflow = generateWAFWorkflow(playbook, profile);
-      break;
-    case "phishing":
-      workflow = generatePhishingWorkflow(playbook, profile);
-      break;
-    case "suspicious_login":
-    case "brute_force":
-      workflow = generateSuspiciousLoginWorkflow(playbook, profile);
-      break;
-    case "malware_hash":
-    case "malware_response":
-      workflow = generateMalwareHashWorkflow(playbook, profile);
-      break;
-    case "malicious_ip":
-    case "lateral_movement":
-      workflow = generateMaliciousIPWorkflow(playbook, profile);
-      break;
-    case "vulnerability":
-      workflow = generateVulnerabilityWorkflow(playbook, profile);
-      break;
-    case "ticket_automation":
-    case "compliance_violation":
-      workflow = generateTicketAutomationWorkflow(playbook, profile);
-      break;
-    case "threat_intel":
-    case "insider_threat":
-      workflow = generateThreatIntelWorkflow(playbook, profile);
-      break;
-    default:
-      workflow = generateCustomWorkflow(playbook, profile);
-  }
+  const { workflow, coverage } = buildFortiSOARWorkflowFromPlan(playbook, profile, collectionUuid);
 
   workflow.collection = `/api/3/workflow_collections/${collectionUuid}`;
 
@@ -2241,9 +2218,88 @@ export function generateFortiSOARWorkflowCollection(
     importedBy: [],
     recordTags: [],
     workflows: [workflow],
+    unsupportedWorkflowCoverage: {
+      enrichments: coverage.unsupportedEnrichments,
+      actions: coverage.unsupportedActions,
+    },
+    workflowCoverageValidation: {
+      missingEnrichmentSteps: coverage.missingEnrichmentSteps,
+      missingActionSteps: coverage.missingActionSteps,
+      passed: coverage.passed,
+    },
   };
 
   return { type: "workflow_collections", data: [collectionData], exported_tags: [] };
+}
+
+function buildFortiSOARWorkflowPlan(playbook: PlaybookState): WorkflowPlanNode[] {
+  const enrichmentActionMap: Record<string, string> = {
+    virustotal: "lookup_virustotal_url",
+    abuseipdb: "lookup_abuseipdb_ip",
+    qradar: "qradar_aql_search",
+    fortiguard: "lookup_fortiguard_url",
+  };
+  const nodes: WorkflowPlanNode[] = [
+    { id: "identity", label: "Identity_Metadata", type: "set_variable", args: { playbook_name: playbook.name || "", playbook_description: playbook.description || "" } },
+    { id: "trigger", label: "Trigger_Context", type: "set_variable", args: { trigger_type: playbook.trigger?.type || "", trigger_source: playbook.trigger?.sourceSystem || "" } },
+    { id: "entities", label: "Entity_Extraction", type: "set_variable", args: { entities: (playbook.entities || []).join(",") } },
+  ];
+  for (const key of playbook.enrichmentConnectors || []) {
+    nodes.push({ id: `enrich_${key}`, label: `Enrich_${key}`, type: "connector", connectorKey: key, actionId: enrichmentActionMap[key] });
+  }
+  nodes.push({ id: "scoring", label: "Scoring", type: "set_variable", args: { scoring_model: String(playbook.scoringModel?.type || "") } });
+  for (const actionId of playbook.actions || []) {
+    nodes.push({ id: `action_${actionId}`, label: `Action_${actionId}`, type: "connector", actionId });
+  }
+  nodes.push(
+    { id: "fallback", label: "Fallback", type: "set_variable", args: { fallback_escalation: playbook.fallbackProcedure?.escalationPath || "", fallback_manual_steps: playbook.fallbackProcedure?.manualSteps || "" } },
+    { id: "testing", label: "Testing_UAT_Metadata", type: "set_variable", args: { test_scenarios: playbook.testingPlan?.scenarios || "" } },
+    { id: "approval", label: "Approval_Gate", type: "approval" },
+    { id: "readiness", label: "Readiness_Profile_Connectors", type: "set_variable", args: { required_connectors: getMergedRequiredConnectorKeys(playbook).join(",") } },
+  );
+  return nodes;
+}
+
+function buildFortiSOARWorkflowFromPlan(playbook: PlaybookState, profile: FortiSOARDeploymentProfile, collectionUuid: string): { workflow: FortiSOARWorkflow; coverage: WorkflowCoverageReport } {
+  const plan = buildFortiSOARWorkflowPlan(playbook);
+  const steps: FortiSOARStep[] = [];
+  const routes: FortiSOARRoute[] = [];
+  const pos = calculateStepPositions(Math.max(plan.length + 2, 16));
+  const trigger = buildTriggerStep(playbook, pos[0]);
+  steps.push(trigger);
+  let prev = trigger;
+  let i = 1;
+  const generatedEnrichments = new Set<string>();
+  const generatedActions = new Set<string>();
+  const unsupportedEnrichments: Array<{ key: string; reason: string }> = [];
+  const unsupportedActions: Array<{ key: string; reason: string }> = [];
+  for (const node of plan) {
+    let step: FortiSOARStep | null = null;
+    if (node.type === "set_variable") step = buildSetVarStep(node.label, node.args || {}, pos[i++]);
+    if (node.type === "approval") step = buildApproval(node.label, "Approval required", generateUUID(), generateUUID(), profile.approvalTeamIri, profile.approvalTeamName, pos[i++]);
+    if (node.type === "connector") {
+      if (!node.actionId) {
+        if (node.connectorKey) unsupportedEnrichments.push({ key: node.connectorKey, reason: "No mapped FortiSOAR operation in registry." });
+      } else {
+        const action = getActionById(node.actionId);
+        if (!action) {
+          if (node.connectorKey) unsupportedEnrichments.push({ key: node.connectorKey, reason: `Action '${node.actionId}' not found.` });
+          else unsupportedActions.push({ key: node.actionId, reason: "Action not found in registry." });
+        } else {
+          const cfg = profile.connectors[action.connectorKey] || buildConnectorConfig(action.connectorKey);
+          step = buildConnector(node.actionId, cfg, pos[i++]);
+          if (node.connectorKey) generatedEnrichments.add(node.connectorKey); else generatedActions.add(node.actionId);
+        }
+      }
+    }
+    if (!step) continue;
+    steps.push(step);
+    routes.push(buildRoute(prev.name, step.name, prev.uuid, step.uuid));
+    prev = step;
+  }
+  const missingEnrichmentSteps = (playbook.enrichmentConnectors || []).filter((k) => !generatedEnrichments.has(k)).filter((k) => !unsupportedEnrichments.some((u) => u.key === k));
+  const missingActionSteps = (playbook.actions || []).filter((a) => !generatedActions.has(a)).filter((a) => !unsupportedActions.some((u) => u.key === a));
+  return { workflow: makeWorkflow(playbook, trigger, steps, routes, collectionUuid), coverage: { unsupportedEnrichments, unsupportedActions, missingEnrichmentSteps, missingActionSteps, passed: missingEnrichmentSteps.length === 0 && missingActionSteps.length === 0 } };
 }
 
 // ============================================================================
