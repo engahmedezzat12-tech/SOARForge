@@ -225,6 +225,11 @@ export interface ScoringModel {
   mitreMapping: string[];
 }
 
+export interface CustomVariable {
+  key: string;
+  value: string;
+}
+
 export interface PlaybookState {
   id: string;
   name: string;
@@ -242,6 +247,7 @@ export interface PlaybookState {
   enrichmentConnectors: string[];
   scoringModel: ScoringModel;
   actions: string[];
+  customVariables?: CustomVariable[];
   fallbackProcedure: {
     escalationPath: string;
     manualSteps: string;
