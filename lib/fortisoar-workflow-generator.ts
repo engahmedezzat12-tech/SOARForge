@@ -2312,6 +2312,7 @@ export function generateReadinessChecks(
   playbook: PlaybookState,
   profile: FortiSOARDeploymentProfile
 ): FortiSOARReadinessCheck[] {
+  const normalizedProfile = normalizeDeploymentProfileForSelections(profile, playbook);
   const checks: FortiSOARReadinessCheck[] = [];
 
   checks.push({ id: "template_selected", label: "Playbook template selected", category: "template", passed: !!playbook.name && playbook.name.trim() !== "", critical: true, fixStepNumber: 1 });
@@ -2322,7 +2323,7 @@ export function generateReadinessChecks(
   checks.push({ id: "scoring_model_selected", label: "Scoring model selected", category: "scoring", passed: !!playbook.scoringModel?.type && (playbook.scoringModel.type as string) !== "", critical: true, fixStepNumber: 5 });
   checks.push({ id: "actions_selected", label: "Response actions selected", category: "actions", passed: playbook.actions.length > 0, critical: true, fixStepNumber: 6 });
 
-  const connectorStatuses = Object.entries(profile.connectors).map(([key, connector]) => ({
+  const connectorStatuses = Object.entries(normalizedProfile.connectors).map(([key, connector]) => ({
     key, connector, status: validateConfigValue(connector.config),
   }));
 
@@ -2417,41 +2418,42 @@ export function generateFortiSOARExportPackage(
   playbook: PlaybookState,
   profile: FortiSOARDeploymentProfile
 ): FortiSOARExportPackage {
-  const workflowCollection = generateFortiSOARWorkflowCollection(playbook, profile);
-  const readinessChecks = generateReadinessChecks(playbook, profile);
+  const normalizedProfile = normalizeDeploymentProfileForSelections(profile, playbook);
+  const workflowCollection = generateFortiSOARWorkflowCollection(playbook, normalizedProfile);
+  const readinessChecks = generateReadinessChecks(playbook, normalizedProfile);
 
   const criticalPassed = readinessChecks.filter((c) => c.critical && c.passed).length;
   const criticalTotal = readinessChecks.filter((c) => c.critical).length;
   const allPassed = readinessChecks.every((c) => c.passed);
 
-  const hasFakeConfigs = Object.values(profile.connectors).some((c) => isFakeValue(c.config));
-  const allValidForImport = Object.values(profile.connectors).every((c) => isConfiguredForImport(c.config, false));
-  const allPlaceholderOrBetter = Object.values(profile.connectors).every((c) => c.config && c.config.trim() !== "" && !isFakeValue(c.config));
+  const hasFakeConfigs = Object.values(normalizedProfile.connectors).some((c) => isFakeValue(c.config));
+  const allValidForImport = Object.values(normalizedProfile.connectors).every((c) => isConfiguredForImport(c.config, false));
+  const allPlaceholderOrBetter = Object.values(normalizedProfile.connectors).every((c) => c.config && c.config.trim() !== "" && !isFakeValue(c.config));
 
   let status: FortiSOARPlaybookStatus = "draft";
   if (criticalPassed === criticalTotal && criticalTotal > 0) status = "ready_for_configuration";
   if (status === "ready_for_configuration" && !hasFakeConfigs && allPlaceholderOrBetter) status = "ready_for_uat";
-  if (allPassed && allValidForImport && !isPlaceholder(profile.approvalTeamIri) && !hasFakeConfigs) status = "ready_for_import";
+  if (allPassed && allValidForImport && !isPlaceholder(normalizedProfile.approvalTeamIri) && !hasFakeConfigs) status = "ready_for_import";
   // "production_ready" is NEVER set automatically
 
   return {
     metadata: {
       name: playbook.name,
-      version: profile.version,
+      version: normalizedProfile.version,
       generatedAt: new Date().toISOString(),
       generatedBy: "SOARForge Professional v1.1",
       templateId: playbook.id,
       status,
     },
     workflowCollection,
-    deploymentProfile: profile,
-    connectorChecklist: Object.values(profile.connectors),
+    deploymentProfile: normalizedProfile,
+    connectorChecklist: Object.values(normalizedProfile.connectors),
     documentation: {
-      implementationGuide: generateImplementationGuide(playbook, profile),
+      implementationGuide: generateImplementationGuide(playbook, normalizedProfile),
       uatTestPlan: generateUATTestPlan(playbook),
       rollbackPlan: generateRollbackPlan(),
       mitreMapping: generateMITREMapping(playbook),
-      connectorMatrix: generateConnectorMatrix(profile),
+      connectorMatrix: generateConnectorMatrix(normalizedProfile),
       knownLimitations: generateKnownLimitations(playbook, readinessChecks),
     },
     readinessChecks,
