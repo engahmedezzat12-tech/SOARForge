@@ -1050,6 +1050,18 @@ export function generatePhishingWorkflow(
   const routes: FortiSOARRoute[] = [];
   const pos = calculateStepPositions(28);
   let pi = 0;
+  const hasQuarantine = (playbook.actions || []).includes("quarantine_email");
+  const hasBlockSender = (playbook.actions || []).includes("block_sender");
+
+  const markDynamicNode = (step: FortiSOARStep, actionId: string): void => {
+    const action = getActionById(actionId);
+    if (!action) return;
+    (step.arguments as Record<string, unknown>).__soarforge_meta = {
+      kind: "dynamic_connector_action",
+      actionId,
+      connectorKey: action.connectorKey,
+    };
+  };
 
   // Step 1: Trigger
   const triggerStep = buildTriggerStep(playbook, pos[pi++]);
@@ -1128,81 +1140,107 @@ export function generatePhishingWorkflow(
   // Step 7: Phishing_Action_Decision
   const approvalUuid = generateUUID();
   const quarantineUuid = generateUUID();
-  const decisionStep = buildDecision("Phishing_Action_Decision", [
-    { condition: `{{ vars.steps.Compute_Phishing_Score.action_decision | default('') | string == 'auto_quarantine' }}`, stepName: "Quarantine_Email", stepUuid: quarantineUuid },
+  const blockSenderUuid = generateUUID();
+  const hasPhishingResponseAction = hasQuarantine || hasBlockSender;
+  const firstActionUuid = hasQuarantine ? quarantineUuid : blockSenderUuid;
+  const firstActionName = hasQuarantine ? "Quarantine_Email" : "Block_Sender";
+
+  const decisionStep = buildDecision("Phishing_Action_Decision", hasPhishingResponseAction ? [
+    { condition: `{{ vars.steps.Compute_Phishing_Score.action_decision | default('') | string == 'auto_quarantine' }}`, stepName: firstActionName, stepUuid: firstActionUuid },
     { condition: `{{ vars.steps.Compute_Phishing_Score.action_decision | default('') | string == 'require_approval' }}`, stepName: "Phishing_Approval", stepUuid: approvalUuid },
     { default: true, stepName: "Finalize", stepUuid: finalizeStep.uuid },
-  ], pos[pi++]);
+  ] : [{ default: true, stepName: "Finalize", stepUuid: finalizeStep.uuid }], pos[pi++]);
   steps.push(decisionStep);
   routes.push(buildRoute("Compute_Phishing_Score", "Phishing_Action_Decision", computeStep.uuid, decisionStep.uuid));
   routes.push(buildRoute("Phishing_Action_Decision", "Finalize", decisionStep.uuid, finalizeStep.uuid));
 
-  // Step 8: Phishing_Approval
-  const postApprovalUuid = generateUUID();
-  const approvalStep = {
-    ...buildApproval(
-      "Phishing_Approval",
-      `Phishing Email Detected\nSender: {{ vars.steps.Extract_Email_IOCs.sender_email | default('N/A') | string }}\nSubject: {{ vars.steps.Extract_Email_IOCs.subject_line | default('N/A') | string }}\nScore: {{ vars.steps.Compute_Phishing_Score.phishing_score | default('0') | string }}\nMessage ID: {{ vars.steps.Extract_Email_IOCs.message_id | default('N/A') | string }}\n\nNote: False Positive Release process available via release_email action.`,
-      quarantineUuid,
-      finalizeStep.uuid,
-      profile.approvalTeamIri,
-      profile.approvalTeamName,
-      pos[pi++]
-    ),
-    uuid: approvalUuid,
-  };
-  steps.push(approvalStep);
-  routes.push(buildRoute("Phishing_Action_Decision", "Phishing_Approval", decisionStep.uuid, approvalUuid));
+  if (hasPhishingResponseAction) {
+    // Step 8: Phishing_Approval
+    const postApprovalUuid = generateUUID();
+    const approvalStep = {
+      ...buildApproval(
+        "Phishing_Approval",
+        `Phishing Email Detected\nSender: {{ vars.steps.Extract_Email_IOCs.sender_email | default('N/A') | string }}\nSubject: {{ vars.steps.Extract_Email_IOCs.subject_line | default('N/A') | string }}\nScore: {{ vars.steps.Compute_Phishing_Score.phishing_score | default('0') | string }}\nMessage ID: {{ vars.steps.Extract_Email_IOCs.message_id | default('N/A') | string }}\n\nNote: False Positive Release process available via release_email action.`,
+        firstActionUuid,
+        finalizeStep.uuid,
+        profile.approvalTeamIri,
+        profile.approvalTeamName,
+        pos[pi++]
+      ),
+      uuid: approvalUuid,
+    };
+    steps.push(approvalStep);
+    routes.push(buildRoute("Phishing_Action_Decision", "Phishing_Approval", decisionStep.uuid, approvalUuid));
 
-  // Step 9: Post-approval decision
-  const postApprovalStep: FortiSOARStep = {
-    "@type": "WorkflowStep",
-    name: "Phishing_Approval_Decision",
-    description: null,
-    arguments: {
-      conditions: [
-        { condition: `{{ vars.steps.Phishing_Approval.approved | default(false) | string | lower == 'true' }}`, step_iri: `/api/3/workflow_steps/${quarantineUuid}`, step_name: "Quarantine_Email" },
-        { default: true, step_iri: `/api/3/workflow_steps/${finalizeStep.uuid}`, step_name: "Finalize" },
-      ],
-      step_variables: [],
-    },
-    status: null,
-    top: String(pos[pi].top),
-    left: String(pos[pi].left),
-    stepType: FORTISOAR_STEP_TYPE_IRIS.decision,
-    group: null,
-    uuid: postApprovalUuid,
-  };
-  pi++;
-  steps.push(postApprovalStep);
-  routes.push(buildRoute("Phishing_Approval", "Phishing_Approval_Decision", approvalUuid, postApprovalUuid));
-  routes.push(buildRoute("Phishing_Approval_Decision", "Finalize", postApprovalUuid, finalizeStep.uuid));
+    // Step 9: Post-approval decision
+    const postApprovalStep: FortiSOARStep = {
+      "@type": "WorkflowStep",
+      name: "Phishing_Approval_Decision",
+      description: null,
+      arguments: {
+        conditions: [
+          { condition: `{{ vars.steps.Phishing_Approval.approved | default(false) | string | lower == 'true' }}`, step_iri: `/api/3/workflow_steps/${firstActionUuid}`, step_name: firstActionName },
+          { default: true, step_iri: `/api/3/workflow_steps/${finalizeStep.uuid}`, step_name: "Finalize" },
+        ],
+        step_variables: [],
+      },
+      status: null,
+      top: String(pos[pi].top),
+      left: String(pos[pi].left),
+      stepType: FORTISOAR_STEP_TYPE_IRIS.decision,
+      group: null,
+      uuid: postApprovalUuid,
+    };
+    pi++;
+    steps.push(postApprovalStep);
+    routes.push(buildRoute("Phishing_Approval", "Phishing_Approval_Decision", approvalUuid, postApprovalUuid));
+    routes.push(buildRoute("Phishing_Approval_Decision", "Finalize", postApprovalUuid, finalizeStep.uuid));
 
-  // Step 10: Quarantine_Email
-  const emailCfg = profile.connectors["exchange"] || buildConnectorConfig("exchange");
-  const quarantineStep = buildConnector("quarantine_email", emailCfg, pos[pi++], {
-    message_id: safeStepVar("Extract_Email_IOCs", "message_id"),
-    mailbox: safeStepVar("Extract_Email_IOCs", "recipient_email"),
-  }) ?? buildSetVarStep("Quarantine_Email", { quarantine_status: "not_configured" }, pos[pi - 1]);
-  quarantineStep.uuid = quarantineUuid;
-  quarantineStep.name = "Quarantine_Email";
-  steps.push(quarantineStep);
-  routes.push(buildRoute("Phishing_Action_Decision", "Quarantine_Email", decisionStep.uuid, quarantineUuid));
-  routes.push(buildRoute("Phishing_Approval_Decision", "Quarantine_Email", postApprovalUuid, quarantineUuid));
+    const emailCfg = profile.connectors["exchange"] || buildConnectorConfig("exchange");
+    let quarantineCreated = false;
 
-  // Step 11: Block_Sender (if selected)
-  const blockSenderUuid = generateUUID();
-  if (playbook.actions.includes("block_sender")) {
-    const blockSenderStep = buildConnector("block_sender", emailCfg, pos[pi++], {
-      sender_address: safeStepVar("Extract_Email_IOCs", "sender_email"),
-    }) ?? buildSetVarStep("Block_Sender", { block_status: "not_configured" }, pos[pi - 1]);
-    blockSenderStep.uuid = blockSenderUuid;
-    blockSenderStep.name = "Block_Sender";
-    steps.push(blockSenderStep);
-    routes.push(buildRoute("Quarantine_Email", "Block_Sender", quarantineUuid, blockSenderUuid));
-    routes.push(buildRoute("Block_Sender", "Finalize", blockSenderUuid, finalizeStep.uuid));
-  } else {
-    routes.push(buildRoute("Quarantine_Email", "Finalize", quarantineUuid, finalizeStep.uuid));
+    if (hasQuarantine) {
+      // Step 10: Quarantine_Email
+      const quarantineStep = buildConnector("quarantine_email", emailCfg, pos[pi++], {
+        message_id: safeStepVar("Extract_Email_IOCs", "message_id"),
+        mailbox: safeStepVar("Extract_Email_IOCs", "recipient_email"),
+      });
+      if (quarantineStep) {
+        quarantineStep.uuid = quarantineUuid;
+        quarantineStep.name = "Quarantine_Email";
+        markDynamicNode(quarantineStep, "quarantine_email");
+        steps.push(quarantineStep);
+        routes.push(buildRoute("Phishing_Action_Decision", "Quarantine_Email", decisionStep.uuid, quarantineUuid));
+        routes.push(buildRoute("Phishing_Approval_Decision", "Quarantine_Email", postApprovalUuid, quarantineUuid));
+        quarantineCreated = true;
+      }
+    }
+
+    if (hasBlockSender) {
+      // Step 11: Block_Sender
+      const blockSenderStep = buildConnector("block_sender", emailCfg, pos[pi++], {
+        sender_address: safeStepVar("Extract_Email_IOCs", "sender_email"),
+      });
+      if (blockSenderStep) {
+        blockSenderStep.uuid = blockSenderUuid;
+        blockSenderStep.name = "Block_Sender";
+        markDynamicNode(blockSenderStep, "block_sender");
+        steps.push(blockSenderStep);
+
+        if (quarantineCreated) {
+          routes.push(buildRoute("Quarantine_Email", "Block_Sender", quarantineUuid, blockSenderUuid));
+        } else {
+          routes.push(buildRoute("Phishing_Action_Decision", "Block_Sender", decisionStep.uuid, blockSenderUuid));
+          routes.push(buildRoute("Phishing_Approval_Decision", "Block_Sender", postApprovalUuid, blockSenderUuid));
+        }
+
+        routes.push(buildRoute("Block_Sender", "Finalize", blockSenderUuid, finalizeStep.uuid));
+      } else if (quarantineCreated) {
+        routes.push(buildRoute("Quarantine_Email", "Finalize", quarantineUuid, finalizeStep.uuid));
+      }
+    } else if (quarantineCreated) {
+      routes.push(buildRoute("Quarantine_Email", "Finalize", quarantineUuid, finalizeStep.uuid));
+    }
   }
 
   const collectionUuid = generateUUID();
