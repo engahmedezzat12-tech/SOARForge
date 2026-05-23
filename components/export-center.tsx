@@ -12,6 +12,7 @@ import {
   generateFortiSOARExportPackage,
   buildDefaultDeploymentProfile,
   generateFortiSOARWorkflowCollection,
+  normalizeDeploymentProfileForSelections,
   validateConfigValue,
   type ConfigValidationStatus,
   type FortiSOARExportPackage,
@@ -39,6 +40,7 @@ import { analyzeThreatCoverage, exportThreatCoverageMarkdown } from '@/lib/threa
 import { IntelligenceReviewPanel } from '@/components/intelligence/intelligence-review-panel';
 import { analyzePlaybookIntelligence } from '@/lib/intelligence/recommendation-engine';
 import { exportIntelligenceReviewMarkdown } from '@/lib/intelligence/intelligence-report-export';
+import { buildExportSelectionManifest } from '@/lib/export-selection-manifest';
 
 // ── Per-platform export card metadata ───────────────────────────────────────
 
@@ -237,7 +239,8 @@ export default function ExportCenter() {
 
   // ── Build all exports ──────────────────────────────────────────────────────
   const exports = useMemo(() => {
-    const profile = deploymentProfile || buildDefaultDeploymentProfile(playbook);
+    const baseProfile = deploymentProfile || buildDefaultDeploymentProfile(playbook);
+    const profile = normalizeDeploymentProfileForSelections(baseProfile, playbook);
     const slug = playbook.name.toLowerCase().replace(/\s+/g, '-') || 'soarforge';
 
     // FortiSOAR path — use existing generator
@@ -348,6 +351,7 @@ export default function ExportCenter() {
     const customerDoc = generateCustomerDocument(playbook, normalized, targetPlatform);
     const customerDocMarkdown = exportCustomerDocMarkdown(customerDoc);
     const customerDocHTML = exportCustomerDocHTML(customerDoc, true);
+    const selectionManifest = buildExportSelectionManifest(playbook, profile);
 
     // Full deployment package — platform-aware, never leaks FortiSOAR data to non-FortiSOAR
     const platformInfo = getPlatformById(targetPlatform);
@@ -370,20 +374,21 @@ export default function ExportCenter() {
       platformSpecificExport: platformContent,
       deploymentProfile: targetPlatform === 'fortisoar' ? profile : null,
       connectorMapping: connectorChecklist,
+      selectionManifest,
       readinessChecks: fortiPkg.readinessChecks,
-      documentation: adapterDocumentation,
+      documentation: `${adapterDocumentation}\n\n## Selection Manifest\n\n\`\`\`json\n${JSON.stringify(selectionManifest, null, 2)}\n\`\`\``,
       tenantVerificationChecklist: pMeta.description,
     };
 
     return {
-      project_state: JSON.stringify(playbook, null, 2),
+      project_state: JSON.stringify({ ...playbook, selectionManifest }, null, 2),
       normalized_blueprint: JSON.stringify(normalized, null, 2),
       threat_coverage_report: threatCoverageMarkdown,
       intelligence_review: intelligenceReviewMarkdown,
       customer_delivery_pack: customerDeliveryPackMarkdown,
       platform_export: JSON.stringify(platformContent, null, 2),
       full_package: JSON.stringify(fullPackage, null, 2),
-      documentation: adapterDocumentation,
+      documentation: `${adapterDocumentation}\n\n## Selection Manifest\n\n\`\`\`json\n${JSON.stringify(selectionManifest, null, 2)}\n\`\`\``,
       connector_checklist: connectorChecklist,
       customer_documentation: customerDocMarkdown,
       // Internal

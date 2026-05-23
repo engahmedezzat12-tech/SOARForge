@@ -2379,6 +2379,36 @@ export function generateReadinessChecks(
   return checks;
 }
 
+export function getMergedRequiredConnectorKeys(playbook: PlaybookState): string[] {
+  return Array.from(
+    new Set([
+      ...(playbook.enrichmentConnectors ?? []),
+      ...getRequiredConnectorsForActions(playbook.actions ?? []),
+    ])
+  );
+}
+
+export function normalizeDeploymentProfileForSelections(
+  profile: FortiSOARDeploymentProfile,
+  playbook: PlaybookState
+): FortiSOARDeploymentProfile {
+  const required = getMergedRequiredConnectorKeys(playbook);
+  const mergedConnectors: Record<string, FortiSOARConnectorConfig> = {
+    ...(profile.connectors ?? {}),
+  };
+
+  for (const connectorKey of required) {
+    mergedConnectors[connectorKey] =
+      mergedConnectors[connectorKey] ?? buildConnectorConfig(connectorKey);
+  }
+
+  return {
+    ...profile,
+    connectors: mergedConnectors,
+    updatedAt: new Date().toISOString(),
+  };
+}
+
 // ============================================================================
 // Full Export Package Generator
 // ============================================================================
