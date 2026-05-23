@@ -2242,12 +2242,18 @@ function buildAugmentedTemplateWorkflow(playbook: PlaybookState, profile: FortiS
   const tid = playbook.templateId || playbook.generatorType || "custom";
   const workflow = ({
     ransomware: generateRansomwareWorkflow,
+    vuln_exploit: generateWAFWorkflow,
     waf_attack: generateWAFWorkflow,
+    brute_force: generateSuspiciousLoginWorkflow,
     phishing: generatePhishingWorkflow,
+    malware_response: generateMalwareHashWorkflow,
     suspicious_login: generateSuspiciousLoginWorkflow,
+    lateral_movement: generateMaliciousIPWorkflow,
     malware_hash: generateMalwareHashWorkflow,
     malicious_ip: generateMaliciousIPWorkflow,
+    compliance_violation: generateTicketAutomationWorkflow,
     vulnerability: generateVulnerabilityWorkflow,
+    insider_threat: generateThreatIntelWorkflow,
     ticket_automation: generateTicketAutomationWorkflow,
     threat_intel: generateThreatIntelWorkflow,
     custom: generateCustomWorkflow,
@@ -2260,10 +2266,30 @@ function buildAugmentedTemplateWorkflow(playbook: PlaybookState, profile: FortiS
   const generatedEnrichments = new Set<string>();
   const generatedActions = new Set<string>();
   const insertPos = calculateStepPositions(steps.length + 10);
+  const routes = workflow.routes || (workflow.routes = []);
   let pi = steps.length;
   const finalizeStep = steps.find((s) => s.name === "Finalize");
-  const routeToFinalize = workflow.routes?.find((r) => finalizeStep && r.targetStep.endsWith(`/${finalizeStep.uuid}`));
-  let prevStep = routeToFinalize ? steps.find((s) => routeToFinalize.sourceStep.endsWith(`/${s.uuid}`)) || steps[steps.length - 1] : steps[steps.length - 1];
+  let prevStep = steps[steps.length - 1];
+  if (finalizeStep) {
+    const candidateFinalizeRoutes = routes
+      .map((route, index) => ({ route, index }))
+      .filter(({ route }) => route.targetStep.endsWith(`/${finalizeStep.uuid}`));
+    const lastNonFinalizeStep = [...steps].reverse().find((s) => s.uuid !== finalizeStep.uuid);
+    let routeToFinalizeIndex = -1;
+    if (lastNonFinalizeStep) {
+      routeToFinalizeIndex = candidateFinalizeRoutes.find(
+        ({ route }) => route.sourceStep.endsWith(`/${lastNonFinalizeStep.uuid}`)
+      )?.index ?? -1;
+    }
+    if (routeToFinalizeIndex < 0 && candidateFinalizeRoutes.length > 0) {
+      routeToFinalizeIndex = candidateFinalizeRoutes[candidateFinalizeRoutes.length - 1].index;
+    }
+    if (routeToFinalizeIndex >= 0) {
+      const routeToFinalize = routes[routeToFinalizeIndex];
+      prevStep = steps.find((s) => routeToFinalize.sourceStep.endsWith(`/${s.uuid}`)) || prevStep;
+      routes.splice(routeToFinalizeIndex, 1);
+    }
+  }
 
   const appendActionIfMissing = (actionId: string, isEnrichment: boolean, sourceKey: string): void => {
     const action = getActionById(actionId);
@@ -2281,7 +2307,7 @@ function buildAugmentedTemplateWorkflow(playbook: PlaybookState, profile: FortiS
     if (!newStep) return;
     steps.push(newStep);
     stepNames.add(newStep.name);
-    if (prevStep) workflow.routes.push(buildRoute(prevStep.name, newStep.name, prevStep.uuid, newStep.uuid));
+    if (prevStep) routes.push(buildRoute(prevStep.name, newStep.name, prevStep.uuid, newStep.uuid));
     prevStep = newStep;
     (isEnrichment ? generatedEnrichments : generatedActions).add(sourceKey);
   };
@@ -2292,9 +2318,31 @@ function buildAugmentedTemplateWorkflow(playbook: PlaybookState, profile: FortiS
     else appendActionIfMissing(mapped, true, key);
   }
   for (const actionId of playbook.actions || []) appendActionIfMissing(actionId, false, actionId);
+  if (finalizeStep && prevStep && prevStep.uuid !== finalizeStep.uuid) {
+    routes.push(buildRoute(prevStep.name, finalizeStep.name, prevStep.uuid, finalizeStep.uuid));
+  }
 
-  const missingEnrichmentSteps = (playbook.enrichmentConnectors || []).filter((k) => !generatedEnrichments.has(k) && !unsupportedEnrichments.some((u) => u.key === k));
-  const missingActionSteps = (playbook.actions || []).filter((a) => !generatedActions.has(a) && !unsupportedActions.some((u) => u.key === a));
+  const hasConnectedPathForActionId = (actionId: string): boolean => {
+    const action = getActionById(actionId);
+    if (!action) return false;
+    const stepName = action.displayName.replace(/\s+/g, "_");
+    const step = steps.find((s) => s.name === stepName);
+    if (!step) return false;
+    const stepIri = `/api/3/workflow_steps/${step.uuid}`;
+    const hasInbound = routes.some((r) => r.targetStep === stepIri);
+    const hasOutbound = routes.some((r) => r.sourceStep === stepIri);
+    return hasInbound && (hasOutbound || step.name === "Finalize");
+  };
+
+  const missingEnrichmentSteps = (playbook.enrichmentConnectors || []).filter((key) => {
+    const mapped = enrichmentActionMap[key];
+    if (!mapped || unsupportedEnrichments.some((u) => u.key === key)) return false;
+    return !hasConnectedPathForActionId(mapped);
+  });
+  const missingActionSteps = (playbook.actions || []).filter((actionId) => {
+    if (unsupportedActions.some((u) => u.key === actionId)) return false;
+    return !hasConnectedPathForActionId(actionId);
+  });
   workflow.collection = `/api/3/workflow_collections/${collectionUuid}`;
   return { workflow, coverage: { unsupportedEnrichments, unsupportedActions, missingEnrichmentSteps, missingActionSteps, passed: missingEnrichmentSteps.length === 0 && missingActionSteps.length === 0 } };
 }
