@@ -5,6 +5,7 @@ import { getMergedRequiredConnectorKeys } from './fortisoar-workflow-generator';
 export interface ExportSelectionManifest {
   enrichmentConnectors: string[];
   selectedActions: string[];
+  customVariables: Array<{ key: string; value: string }>;
   actionRequiredConnectors: string[];
   mergedRequiredConnectorKeys: string[];
   missingConnectorConfigs: string[];
@@ -26,6 +27,7 @@ export function buildExportSelectionManifest(
   return {
     enrichmentConnectors: [...(playbook.enrichmentConnectors ?? [])],
     selectedActions: [...(playbook.actions ?? [])],
+    customVariables: [...(playbook.customVariables ?? [])],
     actionRequiredConnectors,
     mergedRequiredConnectorKeys,
     missingConnectorConfigs,

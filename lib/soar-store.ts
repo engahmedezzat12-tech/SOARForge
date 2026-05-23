@@ -38,6 +38,7 @@ const INITIAL_STATE: PlaybookState = {
   enrichmentConnectors: [],
   scoringModel: EMPTY_SCORING_MODEL,
   actions: [],
+  customVariables: [],
   fallbackProcedure: {
     escalationPath: '',
     manualSteps: '',

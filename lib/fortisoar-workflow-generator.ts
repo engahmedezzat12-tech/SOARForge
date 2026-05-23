@@ -373,6 +373,21 @@ function makeWorkflow(
   };
 }
 
+function appendCustomVariablesIntoWorkflowContext(steps: FortiSOARStep[], playbook: PlaybookState): void {
+  const customVariables = playbook.customVariables || [];
+  if (customVariables.length === 0) return;
+  const contextStep = steps.find((s) => s.name === "Build_Context") || steps.find((s) => s.name === "Final_Context");
+  if (!contextStep || !contextStep.arguments) return;
+  const payload: Record<string, string> = {};
+  for (const item of customVariables) {
+    const key = String(item?.key || "").trim();
+    if (!key) continue;
+    payload[key] = String(item?.value || "");
+  }
+  if (Object.keys(payload).length === 0) return;
+  (contextStep.arguments as Record<string, unknown>).custom_variables = payload;
+}
+
 // ============================================================================
 // Ransomware Playbook Generator
 // ============================================================================
@@ -1050,6 +1065,21 @@ export function generatePhishingWorkflow(
   const routes: FortiSOARRoute[] = [];
   const pos = calculateStepPositions(28);
   let pi = 0;
+  const hasQuarantine = (playbook.actions || []).includes("quarantine_email");
+  const hasBlockSender = (playbook.actions || []).includes("block_sender");
+  const hasServiceNow = (playbook.actions || []).includes("create_servicenow_incident");
+  const hasTeams = (playbook.actions || []).includes("send_teams_notification");
+  const markDynamicNode = (step: FortiSOARStep, actionId: string): void => {
+    const action = getActionById(actionId);
+    if (!action) return;
+    (step.arguments as Record<string, unknown>).__soarforge_meta = {
+      kind: "dynamic_connector_action",
+      actionId,
+      connectorKey: action.connectorKey,
+    };
+  };
+  void hasServiceNow;
+  void hasTeams;
 
   // Step 1: Trigger
   const triggerStep = buildTriggerStep(playbook, pos[pi++]);
@@ -1128,16 +1158,17 @@ export function generatePhishingWorkflow(
   // Step 7: Phishing_Action_Decision
   const approvalUuid = generateUUID();
   const quarantineUuid = generateUUID();
-  const decisionStep = buildDecision("Phishing_Action_Decision", [
+  const decisionStep = buildDecision("Phishing_Action_Decision", hasQuarantine ? [
     { condition: `{{ vars.steps.Compute_Phishing_Score.action_decision | default('') | string == 'auto_quarantine' }}`, stepName: "Quarantine_Email", stepUuid: quarantineUuid },
     { condition: `{{ vars.steps.Compute_Phishing_Score.action_decision | default('') | string == 'require_approval' }}`, stepName: "Phishing_Approval", stepUuid: approvalUuid },
     { default: true, stepName: "Finalize", stepUuid: finalizeStep.uuid },
-  ], pos[pi++]);
+  ] : [{ default: true, stepName: "Finalize", stepUuid: finalizeStep.uuid }], pos[pi++]);
   steps.push(decisionStep);
   routes.push(buildRoute("Compute_Phishing_Score", "Phishing_Action_Decision", computeStep.uuid, decisionStep.uuid));
   routes.push(buildRoute("Phishing_Action_Decision", "Finalize", decisionStep.uuid, finalizeStep.uuid));
 
   // Step 8: Phishing_Approval
+  if (hasQuarantine) {
   const postApprovalUuid = generateUUID();
   const approvalStep = {
     ...buildApproval(
@@ -1183,26 +1214,35 @@ export function generatePhishingWorkflow(
   const quarantineStep = buildConnector("quarantine_email", emailCfg, pos[pi++], {
     message_id: safeStepVar("Extract_Email_IOCs", "message_id"),
     mailbox: safeStepVar("Extract_Email_IOCs", "recipient_email"),
-  }) ?? buildSetVarStep("Quarantine_Email", { quarantine_status: "not_configured" }, pos[pi - 1]);
-  quarantineStep.uuid = quarantineUuid;
-  quarantineStep.name = "Quarantine_Email";
-  steps.push(quarantineStep);
-  routes.push(buildRoute("Phishing_Action_Decision", "Quarantine_Email", decisionStep.uuid, quarantineUuid));
-  routes.push(buildRoute("Phishing_Approval_Decision", "Quarantine_Email", postApprovalUuid, quarantineUuid));
+  });
+  if (quarantineStep) {
+    quarantineStep.uuid = quarantineUuid;
+    quarantineStep.name = "Quarantine_Email";
+    markDynamicNode(quarantineStep, "quarantine_email");
+    steps.push(quarantineStep);
+    routes.push(buildRoute("Phishing_Action_Decision", "Quarantine_Email", decisionStep.uuid, quarantineUuid));
+    routes.push(buildRoute("Phishing_Approval_Decision", "Quarantine_Email", postApprovalUuid, quarantineUuid));
 
-  // Step 11: Block_Sender (if selected)
-  const blockSenderUuid = generateUUID();
-  if (playbook.actions.includes("block_sender")) {
-    const blockSenderStep = buildConnector("block_sender", emailCfg, pos[pi++], {
+    // Step 11: Block_Sender (if selected)
+    const blockSenderUuid = generateUUID();
+    if (hasBlockSender) {
+      const blockSenderStep = buildConnector("block_sender", emailCfg, pos[pi++], {
       sender_address: safeStepVar("Extract_Email_IOCs", "sender_email"),
-    }) ?? buildSetVarStep("Block_Sender", { block_status: "not_configured" }, pos[pi - 1]);
-    blockSenderStep.uuid = blockSenderUuid;
-    blockSenderStep.name = "Block_Sender";
-    steps.push(blockSenderStep);
-    routes.push(buildRoute("Quarantine_Email", "Block_Sender", quarantineUuid, blockSenderUuid));
-    routes.push(buildRoute("Block_Sender", "Finalize", blockSenderUuid, finalizeStep.uuid));
-  } else {
-    routes.push(buildRoute("Quarantine_Email", "Finalize", quarantineUuid, finalizeStep.uuid));
+      });
+      if (blockSenderStep) {
+        blockSenderStep.uuid = blockSenderUuid;
+        blockSenderStep.name = "Block_Sender";
+        markDynamicNode(blockSenderStep, "block_sender");
+        steps.push(blockSenderStep);
+        routes.push(buildRoute("Quarantine_Email", "Block_Sender", quarantineUuid, blockSenderUuid));
+        routes.push(buildRoute("Block_Sender", "Finalize", blockSenderUuid, finalizeStep.uuid));
+      } else {
+        routes.push(buildRoute("Quarantine_Email", "Finalize", quarantineUuid, finalizeStep.uuid));
+      }
+    } else {
+      routes.push(buildRoute("Quarantine_Email", "Finalize", quarantineUuid, finalizeStep.uuid));
+    }
+  }
   }
 
   const collectionUuid = generateUUID();
@@ -2267,14 +2307,107 @@ function buildAugmentedTemplateWorkflow(playbook: PlaybookState, profile: FortiS
   const generatedActions = new Set<string>();
   const insertPos = calculateStepPositions(steps.length + 10);
   const routes = workflow.routes || (workflow.routes = []);
+  const selectedEnrichmentActionIds = new Set(
+    (playbook.enrichmentConnectors || [])
+      .map((key) => enrichmentActionMap[key])
+      .filter((value): value is string => Boolean(value))
+      .map((value) => value.toLowerCase())
+  );
+  const selectedActionIds = new Set((playbook.actions || []).map((value) => String(value).toLowerCase()));
+  const selectedDynamicActionIds = new Set<string>([
+    ...selectedEnrichmentActionIds,
+    ...selectedActionIds,
+  ]);
+  const prunableTemplateActionIds = [
+    "virustotal_ip_lookup",
+    "abuseipdb_lookup",
+    "qradar_aql_search",
+    "fortiguard_url_lookup",
+    "block_ip_fortigate",
+    "block_ip_paloalto",
+    "create_servicenow_incident",
+    "send_teams_notification",
+    "isolate_endpoint",
+    "disable_ad_user",
+    "revoke_azure_sessions",
+    "quarantine_email",
+    "block_sender",
+    "submit_file_to_sandbox",
+  ];
+
+  // Safety fallback prune for stale template-injected dynamic nodes.
+  const prunedStepUuids = new Set<string>();
+  const actionSignatureMap = new Map<string, string>();
+  for (const candidateActionId of prunableTemplateActionIds) {
+    const action = getActionById(candidateActionId);
+    if (!action) continue;
+    const cfg = profile.connectors[action.connectorKey] || buildConnectorConfig(action.connectorKey);
+    const connector = String(cfg.connector || "").toLowerCase();
+    const operation = String(cfg.operation?.trim() ? cfg.operation : action.operation || "").toLowerCase();
+    actionSignatureMap.set(`${connector}::${operation}`, candidateActionId);
+  }
+  const stepActionIdByUuid = new Map<string, string>();
+  for (const step of steps) {
+    const args = step.arguments as Record<string, unknown>;
+    const meta = args?.__soarforge_meta as Record<string, unknown> | undefined;
+    const metaActionId = String(meta?.actionId || "").toLowerCase();
+    if (metaActionId) {
+      stepActionIdByUuid.set(step.uuid, metaActionId);
+      continue;
+    }
+    const connector = String(args?.connector || "").toLowerCase();
+    const operation = String(args?.operation || "").toLowerCase();
+    const matched = actionSignatureMap.get(`${connector}::${operation}`);
+    if (matched) stepActionIdByUuid.set(step.uuid, matched);
+  }
+  for (const candidateActionId of prunableTemplateActionIds) {
+    if (selectedDynamicActionIds.has(candidateActionId)) continue;
+    for (const [stepUuid, mappedActionId] of stepActionIdByUuid.entries()) {
+      if (mappedActionId === candidateActionId) prunedStepUuids.add(stepUuid);
+    }
+  }
+  if (prunedStepUuids.size > 0) {
+    workflow.steps = steps.filter((step) => !prunedStepUuids.has(step.uuid));
+    workflow.routes = routes.filter((route) => {
+      const sourceUuid = route.sourceStep.split("/").pop() || "";
+      const targetUuid = route.targetStep.split("/").pop() || "";
+      return !prunedStepUuids.has(sourceUuid) && !prunedStepUuids.has(targetUuid);
+    });
+    const remainingStepUuids = new Set((workflow.steps || []).map((s) => s.uuid));
+    for (const step of workflow.steps || []) {
+      const args = step.arguments as Record<string, unknown>;
+      const conditions = args?.conditions;
+      if (Array.isArray(conditions)) {
+        const filtered = conditions.filter((condition) => {
+          const iri = String((condition as { step_iri?: string }).step_iri || "");
+          const targetUuid = iri.split("/").pop() || "";
+          return targetUuid === "" || remainingStepUuids.has(targetUuid);
+        });
+        (args as { conditions?: unknown[] }).conditions = filtered.length > 0 ? filtered : conditions;
+      }
+      if (args?.response_mapping && typeof args.response_mapping === "object") {
+        const map = args.response_mapping as Record<string, string>;
+        for (const [key, value] of Object.entries(map)) {
+          const targetUuid = String(value || "").split("/").pop() || "";
+          if (targetUuid && !remainingStepUuids.has(targetUuid)) delete map[key];
+        }
+      }
+    }
+  }
+
+  const activeSteps = workflow.steps || [];
+  const activeRoutes = workflow.routes || [];
+  appendCustomVariablesIntoWorkflowContext(activeSteps, playbook);
+  stepNames.clear();
+  for (const activeStep of activeSteps) stepNames.add(activeStep.name);
   let pi = steps.length;
-  const finalizeStep = steps.find((s) => s.name === "Finalize");
-  let prevStep = steps[steps.length - 1];
+  const finalizeStep = activeSteps.find((s) => s.name === "Finalize");
+  let prevStep = activeSteps[activeSteps.length - 1];
   if (finalizeStep) {
-    const candidateFinalizeRoutes = routes
+    const candidateFinalizeRoutes = activeRoutes
       .map((route, index) => ({ route, index }))
       .filter(({ route }) => route.targetStep.endsWith(`/${finalizeStep.uuid}`));
-    const lastNonFinalizeStep = [...steps].reverse().find((s) => s.uuid !== finalizeStep.uuid);
+    const lastNonFinalizeStep = [...activeSteps].reverse().find((s) => s.uuid !== finalizeStep.uuid);
     let routeToFinalizeIndex = -1;
     if (lastNonFinalizeStep) {
       routeToFinalizeIndex = candidateFinalizeRoutes.find(
@@ -2285,9 +2418,9 @@ function buildAugmentedTemplateWorkflow(playbook: PlaybookState, profile: FortiS
       routeToFinalizeIndex = candidateFinalizeRoutes[candidateFinalizeRoutes.length - 1].index;
     }
     if (routeToFinalizeIndex >= 0) {
-      const routeToFinalize = routes[routeToFinalizeIndex];
-      prevStep = steps.find((s) => routeToFinalize.sourceStep.endsWith(`/${s.uuid}`)) || prevStep;
-      routes.splice(routeToFinalizeIndex, 1);
+      const routeToFinalize = activeRoutes[routeToFinalizeIndex];
+      prevStep = activeSteps.find((s) => routeToFinalize.sourceStep.endsWith(`/${s.uuid}`)) || prevStep;
+      activeRoutes.splice(routeToFinalizeIndex, 1);
     }
   }
 
@@ -2305,9 +2438,11 @@ function buildAugmentedTemplateWorkflow(playbook: PlaybookState, profile: FortiS
     const cfg = profile.connectors[action.connectorKey] || buildConnectorConfig(action.connectorKey);
     const newStep = buildConnector(actionId, cfg, insertPos[Math.min(pi++, insertPos.length - 1)]);
     if (!newStep) return;
-    steps.push(newStep);
+    const newArgs = newStep.arguments as Record<string, unknown>;
+    newArgs.__soarforge_meta = { kind: "dynamic_connector_action", actionId: actionId.toLowerCase(), connectorKey: action.connectorKey };
+    activeSteps.push(newStep);
     stepNames.add(newStep.name);
-    if (prevStep) routes.push(buildRoute(prevStep.name, newStep.name, prevStep.uuid, newStep.uuid));
+    if (prevStep) activeRoutes.push(buildRoute(prevStep.name, newStep.name, prevStep.uuid, newStep.uuid));
     prevStep = newStep;
     (isEnrichment ? generatedEnrichments : generatedActions).add(sourceKey);
   };
@@ -2319,18 +2454,18 @@ function buildAugmentedTemplateWorkflow(playbook: PlaybookState, profile: FortiS
   }
   for (const actionId of playbook.actions || []) appendActionIfMissing(actionId, false, actionId);
   if (finalizeStep && prevStep && prevStep.uuid !== finalizeStep.uuid) {
-    routes.push(buildRoute(prevStep.name, finalizeStep.name, prevStep.uuid, finalizeStep.uuid));
+    activeRoutes.push(buildRoute(prevStep.name, finalizeStep.name, prevStep.uuid, finalizeStep.uuid));
   }
 
   const hasConnectedPathForActionId = (actionId: string): boolean => {
     const action = getActionById(actionId);
     if (!action) return false;
     const stepName = action.displayName.replace(/\s+/g, "_");
-    const step = steps.find((s) => s.name === stepName);
+    const step = activeSteps.find((s) => s.name === stepName);
     if (!step) return false;
     const stepIri = `/api/3/workflow_steps/${step.uuid}`;
-    const hasInbound = routes.some((r) => r.targetStep === stepIri);
-    const hasOutbound = routes.some((r) => r.sourceStep === stepIri);
+    const hasInbound = activeRoutes.some((r) => r.targetStep === stepIri);
+    const hasOutbound = activeRoutes.some((r) => r.sourceStep === stepIri);
     return hasInbound && (hasOutbound || step.name === "Finalize");
   };
 
@@ -2573,6 +2708,11 @@ ${playbook.description || "SOARForge generated playbook."}
 
 ## Required Connectors
 ${Object.values(profile.connectors).map((c) => `- ${c.displayName} (${c.connector} v${c.version})`).join("\n")}
+
+## Custom Variables
+${(playbook.customVariables ?? []).length > 0
+  ? (playbook.customVariables ?? []).map((v) => `- ${v.key}: ${v.value}`).join("\n")
+  : "- None"}
 
 ## Configuration Placeholders
 | Placeholder | Description |

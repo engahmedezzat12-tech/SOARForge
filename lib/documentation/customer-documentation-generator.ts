@@ -240,6 +240,8 @@ function buildExecutiveSummary(
   lines.push(`- ${enrichmentCount} enrichment source${enrichmentCount !== 1 ? 's' : ''} queried per alert`);
   lines.push(`- ${actionCount} response action${actionCount !== 1 ? 's' : ''} available for containment`);
   lines.push(`- ${hasApproval ? 'Approval gate enabled — analyst sign-off required before destructive actions' : 'Fully automated response (no approval gate configured)'}`);
+  const customVars = playbook.customVariables ?? [];
+  lines.push(`- ${customVars.length} custom variable${customVars.length !== 1 ? 's' : ''} included in export context`);
 
   lines.push('');
   if (directImport) {

@@ -85,6 +85,7 @@ export function autoFillMissingFields(
     
     // Step 6: Actions
     actions: template.actions || template.actionIds || [],
+    customVariables: [],
     
     // Step 7: Fallback
     fallbackProcedure: defaults.fallbackProcedure || template.fallbackProcedure || {
