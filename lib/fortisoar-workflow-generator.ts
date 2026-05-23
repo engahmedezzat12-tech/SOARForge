@@ -2645,6 +2645,12 @@ function validateGeneratedWorkflowStructure(collection: FortiSOARWorkflowCollect
   const dynamicByAction = new Map<string, FortiSOARStep[]>();
   const dynamicByCapability = new Map<string, FortiSOARStep[]>();
   const connectorOpIndex = new Map<string, FortiSOARStep[]>();
+  const enrichmentConnectorFallback: Record<string, Array<{ connector: string; operation: string }>> = {
+    abuseipdb: [{ connector: "abuseipdb", operation: "ip_reputation_check" }],
+    virustotal: [{ connector: "virustotal", operation: "ip_reputation" }, { connector: "virustotal", operation: "hash_reputation" }, { connector: "virustotal", operation: "url_reputation" }, { connector: "virustotal", operation: "domain_reputation" }],
+    fortiguard: [{ connector: "fortiguard", operation: "url_lookup" }],
+    qradar: [{ connector: "qradar", operation: "aql_search" }],
+  };
   for (const step of workflow.steps) {
     const args = step.arguments as Record<string, unknown>;
     const meta = args?.__soarforge_meta as { actionId?: string; capabilityId?: string } | undefined;
@@ -2698,8 +2704,27 @@ function validateGeneratedWorkflowStructure(collection: FortiSOARWorkflowCollect
   if ((dynamicByCapability.get("waf_block_ip") ?? []).length > 0 && !(playbook.actions || []).some((a) => a === "block_ip_fortigate" || a === "block_ip_paloalto")) {
     errors.push("Unselected dynamic WAF block node detected (metadata present without selected action).");
   }
-  if ((playbook.enrichmentConnectors || []).some((c) => c === "abuseipdb" || c === "virustotal")) {
-    errors.push("Known limitation: WAF enrichment/hunt placement before scoring is not fully implemented yet.");
+  for (const connectorKey of playbook.enrichmentConnectors || []) {
+    if (!["abuseipdb", "virustotal", "fortiguard", "qradar"].includes(connectorKey)) continue;
+    const capabilityMetaKey = `${connectorKey}_enrichment`;
+    const metaSteps = dynamicByCapability.get(capabilityMetaKey) ?? [];
+    let matchedSteps = metaSteps;
+    if (matchedSteps.length === 0) {
+      const fallbacks = enrichmentConnectorFallback[connectorKey] ?? [];
+      matchedSteps = fallbacks.flatMap((f) => connectorOpIndex.get(`${f.connector}::${f.operation}`) ?? []);
+    }
+    if (matchedSteps.length === 0) {
+      errors.push(`Selected enrichment/hunt connector missing generated connected node: ${connectorKey}`);
+      continue;
+    }
+    for (const st of matchedSteps) {
+      const iri = `/api/3/workflow_steps/${st.uuid}`;
+      const inbound = workflow.routes.some((r) => r.targetStep === iri);
+      const outbound = workflow.routes.some((r) => r.sourceStep === iri);
+      if (!inbound || !outbound) {
+        errors.push(`Enrichment/hunt node connectivity invalid for ${connectorKey}: ${st.name} (inbound=${inbound}, outbound=${outbound})`);
+      }
+    }
   }
   return Array.from(new Set(errors));
 }
