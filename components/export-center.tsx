@@ -195,6 +195,10 @@ function buildExportCards(platform: SoarPlatformId): ExportCardMeta[] {
   ];
 }
 
+function renderSelectionManifestMarkdown(selectionManifest: ReturnType<typeof buildExportSelectionManifest>): string {
+  return `## Selection Manifest\n\n\`\`\`json\n${JSON.stringify(selectionManifest, null, 2)}\n\`\`\``;
+}
+
 // ── Status meta ──────────────────────────────────────────────────────────────
 
 const STATUS_META: Record<string, { bg: string; border: string; text: string; icon: typeof CheckCircle }> = {
@@ -267,7 +271,7 @@ export default function ExportCenter() {
       exportReadiness: intelligenceExportReadiness,
     });
     const intelligenceReviewMarkdown = exportIntelligenceReviewMarkdown(intelligenceReview);
-    const customerDeliveryPackMarkdown = [
+    const customerDeliveryPackBaseMarkdown = [
       `# Customer Delivery Pack — ${playbook.name}`,
       '',
       `**Target Platform:** ${targetPlatform}`,
@@ -352,6 +356,9 @@ export default function ExportCenter() {
     const customerDocMarkdown = exportCustomerDocMarkdown(customerDoc);
     const customerDocHTML = exportCustomerDocHTML(customerDoc, true);
     const selectionManifest = buildExportSelectionManifest(playbook, profile);
+    const selectionManifestMarkdown = renderSelectionManifestMarkdown(selectionManifest);
+    const customerDeliveryPackMarkdown = `${customerDeliveryPackBaseMarkdown}\n\n${selectionManifestMarkdown}`;
+    const customerDocumentationMarkdown = `${customerDocMarkdown}\n\n${selectionManifestMarkdown}`;
 
     // Full deployment package — platform-aware, never leaks FortiSOAR data to non-FortiSOAR
     const platformInfo = getPlatformById(targetPlatform);
@@ -376,7 +383,7 @@ export default function ExportCenter() {
       connectorMapping: connectorChecklist,
       selectionManifest,
       readinessChecks: fortiPkg.readinessChecks,
-      documentation: `${adapterDocumentation}\n\n## Selection Manifest\n\n\`\`\`json\n${JSON.stringify(selectionManifest, null, 2)}\n\`\`\``,
+      documentation: `${adapterDocumentation}\n\n${selectionManifestMarkdown}`,
       tenantVerificationChecklist: pMeta.description,
     };
 
@@ -388,9 +395,9 @@ export default function ExportCenter() {
       customer_delivery_pack: customerDeliveryPackMarkdown,
       platform_export: JSON.stringify(platformContent, null, 2),
       full_package: JSON.stringify(fullPackage, null, 2),
-      documentation: `${adapterDocumentation}\n\n## Selection Manifest\n\n\`\`\`json\n${JSON.stringify(selectionManifest, null, 2)}\n\`\`\``,
+      documentation: `${adapterDocumentation}\n\n${selectionManifestMarkdown}`,
       connector_checklist: connectorChecklist,
-      customer_documentation: customerDocMarkdown,
+      customer_documentation: customerDocumentationMarkdown,
       // Internal
       _status: fortiPkg.metadata.status,
       _readinessChecks: fortiPkg.readinessChecks,
@@ -407,10 +414,14 @@ export default function ExportCenter() {
   const exportReadiness = useMemo(() => {
     const normalized = buildNormalizedPlaybook(playbook, targetPlatform);
     const adapter = getPlatformAdapter(targetPlatform);
+    const readinessProfile = normalizeDeploymentProfileForSelections(
+      deploymentProfile || buildDefaultDeploymentProfile(playbook),
+      playbook,
+    );
     const readiness = adapter.validateReadiness(
       normalized,
       {
-        ...(deploymentProfile ?? {}),
+        ...(readinessProfile ?? {}),
         _playbookState: playbook,
       },
     );
