@@ -21,6 +21,7 @@ import {
   buildConnectorConfig,
   getRequiredConnectorsForActions,
 } from "./fortisoar-action-registry";
+import { validateCapabilityContract } from './capability-contract';
 import type { PlaybookState } from "./soar-types";
 interface WorkflowPlanNode {
   id: string;
@@ -2500,6 +2501,9 @@ export function generateReadinessChecks(
   checks.push({ id: "enrichment_configured", label: "Enrichment sources configured", category: "enrichment", passed: playbook.enrichmentConnectors.length > 0, critical: false, fixStepNumber: 4 });
   checks.push({ id: "scoring_model_selected", label: "Scoring model selected", category: "scoring", passed: !!playbook.scoringModel?.type && (playbook.scoringModel.type as string) !== "", critical: true, fixStepNumber: 5 });
   checks.push({ id: "actions_selected", label: "Response actions selected", category: "actions", passed: playbook.actions.length > 0, critical: true, fixStepNumber: 6 });
+
+  const contractErrors = validateCapabilityContract(playbook);
+  checks.push({ id: "capability_contract_valid", label: "Step 11 capability contract validation", category: "actions", passed: contractErrors.length === 0, critical: true, note: contractErrors.join('; ') || undefined, fixStepNumber: 11 });
 
   const connectorStatuses = Object.entries(normalizedProfile.connectors).map(([key, connector]) => ({
     key, connector, status: validateConfigValue(connector.config),
