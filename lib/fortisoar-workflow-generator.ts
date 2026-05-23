@@ -1259,6 +1259,18 @@ export function generateSuspiciousLoginWorkflow(
   const routes: FortiSOARRoute[] = [];
   const pos = calculateStepPositions(28);
   let pi = 0;
+  const hasDisableAD = (playbook.actions || []).includes("disable_ad_user");
+  const hasRevokeAzure = (playbook.actions || []).includes("revoke_azure_sessions");
+
+  const markDynamicNode = (step: FortiSOARStep, actionId: string): void => {
+    const action = getActionById(actionId);
+    if (!action) return;
+    (step.arguments as Record<string, unknown>).__soarforge_meta = {
+      kind: "dynamic_connector_action",
+      actionId,
+      connectorKey: action.connectorKey,
+    };
+  };
 
   // Step 1: Trigger
   const triggerStep = buildTriggerStep(playbook, pos[pi++]);
@@ -1341,10 +1353,49 @@ export function generateSuspiciousLoginWorkflow(
 
   // Step 6: Identity_Action_Decision
   const approvalUuid = generateUUID();
+  const postApprovalUuid = generateUUID();
   const disableUuid = generateUUID();
-  const decisionStep = buildDecision("Identity_Action_Decision", [
+  const revokeUuid = generateUUID();
+  const escalateUuid = generateUUID();
+
+  const identityActionChain: Array<{ name: string; uuid: string; step: FortiSOARStep }> = [];
+
+  if (hasDisableAD) {
+    const adCfg = profile.connectors["active_directory"] || buildConnectorConfig("active_directory");
+    const disableStep = buildConnector("disable_ad_user", adCfg, pos[Math.min(pi + 3, pos.length - 1)], {
+      search_attr_name: "sAMAccountName",
+      search_attr_value: safeStepVar("User_Context", "username_normalized"),
+    });
+    if (disableStep) {
+      disableStep.uuid = disableUuid;
+      disableStep.name = "Disable_AD_User";
+      markDynamicNode(disableStep, "disable_ad_user");
+      identityActionChain.push({ name: "Disable_AD_User", uuid: disableUuid, step: disableStep });
+    }
+  }
+
+  if (hasRevokeAzure) {
+    const azureCfg = profile.connectors["azure_ad"] || buildConnectorConfig("azure_ad");
+    const revokeStep = buildConnector("revoke_azure_sessions", azureCfg, pos[Math.min(pi + 4, pos.length - 1)], {
+      user_principal_name: safeStepVar("User_Context", "upn"),
+    });
+    if (revokeStep) {
+      revokeStep.uuid = revokeUuid;
+      revokeStep.name = "Revoke_Azure_Sessions";
+      markDynamicNode(revokeStep, "revoke_azure_sessions");
+      identityActionChain.push({ name: "Revoke_Azure_Sessions", uuid: revokeUuid, step: revokeStep });
+    }
+  }
+
+  const firstAction = identityActionChain[0];
+  const hasIdentityResponseAction = Boolean(firstAction);
+
+  const decisionStep = buildDecision("Identity_Action_Decision", hasIdentityResponseAction ? [
     { condition: `{{ vars.steps.Identity_Safety_Gates.action_decision | default('') | string == 'require_approval' }}`, stepName: "Identity_Approval", stepUuid: approvalUuid },
-    { condition: `{{ vars.steps.Identity_Safety_Gates.action_decision | default('') | string == 'escalate_manual' }}`, stepName: "Manual_Escalation", stepUuid: generateUUID() },
+    { condition: `{{ vars.steps.Identity_Safety_Gates.action_decision | default('') | string == 'escalate_manual' }}`, stepName: "Manual_Escalation", stepUuid: escalateUuid },
+    { default: true, stepName: "Finalize", stepUuid: finalizeStep.uuid },
+  ] : [
+    { condition: `{{ vars.steps.Identity_Safety_Gates.action_decision | default('') | string == 'escalate_manual' }}`, stepName: "Manual_Escalation", stepUuid: escalateUuid },
     { default: true, stepName: "Finalize", stepUuid: finalizeStep.uuid },
   ], pos[pi++]);
   steps.push(decisionStep);
@@ -1352,7 +1403,6 @@ export function generateSuspiciousLoginWorkflow(
   routes.push(buildRoute("Identity_Action_Decision", "Finalize", decisionStep.uuid, finalizeStep.uuid));
 
   // Manual escalation step
-  const escalateUuid = (decisionStep.arguments as { conditions: Array<{ step_iri: string }> }).conditions[1].step_iri.split("/").pop()!;
   const escalateStep = buildSetVarStep("Manual_Escalation", {
     escalation_note: `ESCALATE MANUALLY: Account {{ vars.steps.User_Context.username_normalized | default('N/A') | string }} is a privileged/service account. Do not auto-disable. Escalate to SOC Lead and Identity Team.`,
     requires_human_review: "true",
@@ -1362,77 +1412,66 @@ export function generateSuspiciousLoginWorkflow(
   routes.push(buildRoute("Identity_Action_Decision", "Manual_Escalation", decisionStep.uuid, escalateUuid));
   routes.push(buildRoute("Manual_Escalation", "Finalize", escalateUuid, finalizeStep.uuid));
 
-  // Step 7: Identity_Approval (Approval_Before_Disable)
-  const postApprovalUuid = generateUUID();
-  const approvalStep = {
-    ...buildApproval(
-      "Identity_Approval",
-      `APPROVAL_BEFORE_DISABLE\nUser: {{ vars.steps.User_Context.username_normalized | default('N/A') | string }}\nUPN: {{ vars.steps.User_Context.upn | default('N/A') | string }}\nSource IP: {{ vars.steps.User_Context.source_ip | default('N/A') | string }}\nCountry: {{ vars.steps.User_Context.login_country | default('N/A') | string }}\nScore: {{ vars.steps.Identity_Safety_Gates.identity_score | default('0') | string }}\n\nAction: Disable AD account and revoke Azure sessions.\nConfirm this is NOT a service account or Domain Admin before approving.`,
-      disableUuid,
-      finalizeStep.uuid,
-      profile.approvalTeamIri,
-      profile.approvalTeamName,
-      pos[pi++]
-    ),
-    uuid: approvalUuid,
-  };
-  steps.push(approvalStep);
-  routes.push(buildRoute("Identity_Action_Decision", "Identity_Approval", decisionStep.uuid, approvalUuid));
+  if (hasIdentityResponseAction) {
+    // Step 7: Identity_Approval (Approval_Before_Disable)
+    const approvalStep = {
+      ...buildApproval(
+        "Identity_Approval",
+        `APPROVAL_BEFORE_DISABLE\nUser: {{ vars.steps.User_Context.username_normalized | default('N/A') | string }}\nUPN: {{ vars.steps.User_Context.upn | default('N/A') | string }}\nSource IP: {{ vars.steps.User_Context.source_ip | default('N/A') | string }}\nCountry: {{ vars.steps.User_Context.login_country | default('N/A') | string }}\nScore: {{ vars.steps.Identity_Safety_Gates.identity_score | default('0') | string }}\n\nAction: Execute selected identity response action(s).\nConfirm this is NOT a service account or Domain Admin before approving.`,
+        firstAction.uuid,
+        finalizeStep.uuid,
+        profile.approvalTeamIri,
+        profile.approvalTeamName,
+        pos[pi++]
+      ),
+      uuid: approvalUuid,
+    };
+    steps.push(approvalStep);
+    routes.push(buildRoute("Identity_Action_Decision", "Identity_Approval", decisionStep.uuid, approvalUuid));
 
-  // Post-approval decision
-  const postApprovalStep: FortiSOARStep = {
-    "@type": "WorkflowStep",
-    name: "Identity_Approval_Decision",
-    description: null,
-    arguments: {
-      conditions: [
-        {
-          condition: `{{ (vars.steps.Identity_Approval.approved | default(false) | string | lower == 'true') and (vars.steps.User_Context.is_service_account | default('false') | string | lower != 'true') and (vars.steps.User_Context.is_domain_admin | default('false') | string | lower != 'true') }}`,
-          step_iri: `/api/3/workflow_steps/${disableUuid}`,
-          step_name: "Disable_AD_User",
-        },
-        { default: true, step_iri: `/api/3/workflow_steps/${finalizeStep.uuid}`, step_name: "Finalize" },
-      ],
-      step_variables: [],
-    },
-    status: null,
-    top: String(pos[pi].top),
-    left: String(pos[pi].left),
-    stepType: FORTISOAR_STEP_TYPE_IRIS.decision,
-    group: null,
-    uuid: postApprovalUuid,
-  };
-  pi++;
-  steps.push(postApprovalStep);
-  routes.push(buildRoute("Identity_Approval", "Identity_Approval_Decision", approvalUuid, postApprovalUuid));
-  routes.push(buildRoute("Identity_Approval_Decision", "Finalize", postApprovalUuid, finalizeStep.uuid));
+    // Post-approval decision
+    const postApprovalStep: FortiSOARStep = {
+      "@type": "WorkflowStep",
+      name: "Identity_Approval_Decision",
+      description: null,
+      arguments: {
+        conditions: [
+          {
+            condition: `{{ (vars.steps.Identity_Approval.approved | default(false) | string | lower == 'true') and (vars.steps.User_Context.is_service_account | default('false') | string | lower != 'true') and (vars.steps.User_Context.is_domain_admin | default('false') | string | lower != 'true') }}`,
+            step_iri: `/api/3/workflow_steps/${firstAction.uuid}`,
+            step_name: firstAction.name,
+          },
+          { default: true, step_iri: `/api/3/workflow_steps/${finalizeStep.uuid}`, step_name: "Finalize" },
+        ],
+        step_variables: [],
+      },
+      status: null,
+      top: String(pos[pi].top),
+      left: String(pos[pi].left),
+      stepType: FORTISOAR_STEP_TYPE_IRIS.decision,
+      group: null,
+      uuid: postApprovalUuid,
+    };
+    pi++;
+    steps.push(postApprovalStep);
+    routes.push(buildRoute("Identity_Approval", "Identity_Approval_Decision", approvalUuid, postApprovalUuid));
+    routes.push(buildRoute("Identity_Approval_Decision", "Finalize", postApprovalUuid, finalizeStep.uuid));
 
-  // Step 8: Disable_AD_User
-  const adCfg = profile.connectors["active_directory"] || buildConnectorConfig("active_directory");
-  const disableStep = buildConnector("disable_ad_user", adCfg, pos[pi++], {
-    search_attr_name: "sAMAccountName",
-    search_attr_value: safeStepVar("User_Context", "username_normalized"),
-  }) ?? buildSetVarStep("Disable_AD_User", { disable_status: "not_configured" }, pos[pi - 1]);
-  disableStep.uuid = disableUuid;
-  disableStep.name = "Disable_AD_User";
-  steps.push(disableStep);
-  routes.push(buildRoute("Identity_Approval_Decision", "Disable_AD_User", postApprovalUuid, disableUuid));
+    for (const action of identityActionChain) {
+      const actionPos = pos[Math.min(pi++, pos.length - 1)];
+      action.step.top = String(actionPos.top);
+      action.step.left = String(actionPos.left);
+      steps.push(action.step);
+    }
 
-  // Step 9: Revoke_Azure_Sessions (if azure_ad connector present)
-  const revokeUuid = generateUUID();
-  const azureCfg = profile.connectors["azure_ad"];
-  if (azureCfg || playbook.actions.includes("revoke_azure_sessions")) {
-    const cfg = azureCfg || buildConnectorConfig("azure_ad");
-    const revokeStep = buildConnector("revoke_azure_sessions", cfg, pos[pi++], {
-      user_principal_name: safeStepVar("User_Context", "upn"),
-    }) ?? buildSetVarStep("Revoke_Azure_Sessions", { revoke_status: "not_configured" }, pos[pi - 1]);
-    revokeStep.uuid = revokeUuid;
-    revokeStep.name = "Revoke_Azure_Sessions";
-    steps.push(revokeStep);
-    routes.push(buildRoute("Disable_AD_User", "Revoke_Azure_Sessions", disableUuid, revokeUuid));
-    routes.push(buildRoute("Revoke_Azure_Sessions", "Finalize", revokeUuid, finalizeStep.uuid));
-  } else {
-    routes.push(buildRoute("Disable_AD_User", "Finalize", disableUuid, finalizeStep.uuid));
+    routes.push(buildRoute("Identity_Approval_Decision", firstAction.name, postApprovalUuid, firstAction.uuid));
+    for (let i = 1; i < identityActionChain.length; i++) {
+      const previous = identityActionChain[i - 1];
+      const current = identityActionChain[i];
+      routes.push(buildRoute(previous.name, current.name, previous.uuid, current.uuid));
+    }
+    const lastAction = identityActionChain[identityActionChain.length - 1];
+    routes.push(buildRoute(lastAction.name, "Finalize", lastAction.uuid, finalizeStep.uuid));
   }
 
   const collectionUuid = generateUUID();
