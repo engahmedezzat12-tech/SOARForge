@@ -9,6 +9,7 @@ import {
   FORTISOAR_ACTION_REGISTRY,
   FORTISOAR_CONNECTOR_TEMPLATES,
 } from '@/lib/fortisoar-action-registry';
+import { cleanupSelectionsByContract, getVisibleActionIds } from '@/lib/capability-contract';
 
 const CATEGORY_ORDER = [
   'EDR',
@@ -45,21 +46,22 @@ export default function Step6Actions() {
 
   const handleAddAction = (actionId: string) => {
     if (!playbook.actions.includes(actionId)) {
-      setPlaybook({
+      setPlaybook(cleanupSelectionsByContract({
         ...playbook,
         actions: [...playbook.actions, actionId],
-      });
+      }));
     }
   };
 
   const handleRemoveAction = (actionId: string) => {
-    setPlaybook({
+    setPlaybook(cleanupSelectionsByContract({
       ...playbook,
       actions: playbook.actions.filter((a) => a !== actionId),
-    });
+    }));
   };
 
-  const registryActions = getRegistryActions();
+  const visibleActionIds = new Set(getVisibleActionIds(playbook, ['response_action', 'notification', 'ticketing']));
+  const registryActions = getRegistryActions().filter((a) => visibleActionIds.has(a.actionId));
   const selectedActions = registryActions.filter((action) => playbook.actions.includes(action.actionId));
   const availableActions = registryActions.filter((action) => !playbook.actions.includes(action.actionId));
 

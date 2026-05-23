@@ -14,6 +14,9 @@ import type {
   FortiSOARReadinessCheck,
   FortiSOARPlaybookStatus,
   FortiSOARConnectorConfig,
+  FortiSOARDecisionArguments,
+  FortiSOARApprovalArguments,
+  FortiSOARConnectorArguments,
 } from "./fortisoar-types";
 import { FORTISOAR_STEP_TYPE_IRIS } from "./fortisoar-types";
 import {
@@ -21,6 +24,7 @@ import {
   buildConnectorConfig,
   getRequiredConnectorsForActions,
 } from "./fortisoar-action-registry";
+import { validateCapabilityContract } from './capability-contract';
 import type { PlaybookState } from "./soar-types";
 interface WorkflowPlanNode {
   id: string;
@@ -876,6 +880,17 @@ export function generateWAFWorkflow(
   const routes: FortiSOARRoute[] = [];
   const pos = calculateStepPositions(28);
   let pi = 0;
+  const markDynamicNode = (step: FortiSOARStep, actionId: string, capabilityId: string): void => {
+    const action = getActionById(actionId);
+    if (!action) return;
+    (step.arguments as Record<string, unknown>).__soarforge_meta = {
+      kind: "dynamic_connector_action",
+      actionId,
+      capabilityId,
+      connectorKey: action.connectorKey,
+      operation: action.operation,
+    };
+  };
 
   // Step 1: Trigger
   const triggerStep = buildTriggerStep(playbook, pos[pi++]);
@@ -937,21 +952,24 @@ export function generateWAFWorkflow(
   );
   steps.push(finalizeStep);
 
-  // Step 6: WAF_Action_Decision
+  const hasWafBlockAction = playbook.actions.includes("block_ip_fortigate") || playbook.actions.includes("block_ip_paloalto");
   const approvalUuid = generateUUID();
   const blockUuid = generateUUID();
-  const decisionStep = buildDecision("WAF_Action_Decision", [
-    { condition: `{{ vars.steps.Compute_WAF_Score.action_decision | default('') | string == 'auto_block' }}`, stepName: "Block_IP", stepUuid: blockUuid },
-    { condition: `{{ vars.steps.Compute_WAF_Score.action_decision | default('') | string == 'require_approval' }}`, stepName: "WAF_Approval", stepUuid: approvalUuid },
-    { default: true, stepName: "Finalize", stepUuid: finalizeStep.uuid },
-  ], pos[pi++]);
+  const decisionConditions = hasWafBlockAction
+    ? [
+      { condition: `{{ vars.steps.Compute_WAF_Score.action_decision | default('') | string == 'auto_block' }}`, stepName: "Block_IP", stepUuid: blockUuid },
+      { condition: `{{ vars.steps.Compute_WAF_Score.action_decision | default('') | string == 'require_approval' }}`, stepName: "WAF_Approval", stepUuid: approvalUuid },
+      { default: true, stepName: "Finalize", stepUuid: finalizeStep.uuid },
+    ]
+    : [{ default: true, stepName: "Finalize", stepUuid: finalizeStep.uuid }];
+  const decisionStep = buildDecision("WAF_Action_Decision", decisionConditions, pos[pi++]);
   steps.push(decisionStep);
   routes.push(buildRoute("Compute_WAF_Score", "WAF_Action_Decision", computeStep.uuid, decisionStep.uuid));
   routes.push(buildRoute("WAF_Action_Decision", "Finalize", decisionStep.uuid, finalizeStep.uuid));
 
-  // Step 7: WAF_Approval
   const postApprovalUuid = generateUUID();
-  const approvalStep = {
+  if (hasWafBlockAction) {
+    const approvalStep = {
     ...buildApproval(
       "WAF_Approval",
       `WAF Attack Detected\nSource IP: {{ vars.steps.Extract_IOCs.source_ip | default('N/A') | string }}\nAttack Type: {{ vars.steps.Extract_IOCs.attack_type | default('N/A') | string }}\nScore: {{ vars.steps.Compute_WAF_Score.waf_score | default('0') | string }}\n\nGUARDRAIL: Verify source IP is not a CDN or cloud provider IP before approving block.`,
@@ -963,11 +981,11 @@ export function generateWAFWorkflow(
     ),
     uuid: approvalUuid,
   };
-  steps.push(approvalStep);
-  routes.push(buildRoute("WAF_Action_Decision", "WAF_Approval", decisionStep.uuid, approvalUuid));
+    steps.push(approvalStep);
+    routes.push(buildRoute("WAF_Action_Decision", "WAF_Approval", decisionStep.uuid, approvalUuid));
 
   // Step 8: Approval decision
-  const postApprovalStep: FortiSOARStep = {
+    const postApprovalStep: FortiSOARStep = {
     "@type": "WorkflowStep",
     name: "WAF_Approval_Decision",
     description: null,
@@ -985,36 +1003,41 @@ export function generateWAFWorkflow(
     group: null,
     uuid: postApprovalUuid,
   };
-  pi++;
-  steps.push(postApprovalStep);
-  routes.push(buildRoute("WAF_Approval", "WAF_Approval_Decision", approvalUuid, postApprovalUuid));
-  routes.push(buildRoute("WAF_Approval_Decision", "Finalize", postApprovalUuid, finalizeStep.uuid));
+    pi++;
+    steps.push(postApprovalStep);
+    routes.push(buildRoute("WAF_Approval", "WAF_Approval_Decision", approvalUuid, postApprovalUuid));
+    routes.push(buildRoute("WAF_Approval_Decision", "Finalize", postApprovalUuid, finalizeStep.uuid));
 
   // Step 9: Block_IP
-  const fwCfg = profile.connectors["fortigate_firewall"] || profile.connectors["palo_alto_firewall"] || buildConnectorConfig("fortigate_firewall");
-  const blockActionId = playbook.actions.includes("block_ip_fortigate") ? "block_ip_fortigate" : "block_ip_paloalto";
-  const blockStep = buildConnector(blockActionId, fwCfg, pos[pi++], {
+    const fwCfg = playbook.actions.includes("block_ip_fortigate")
+      ? (profile.connectors["fortigate_firewall"] || buildConnectorConfig("fortigate_firewall"))
+      : (profile.connectors["palo_alto_firewall"] || buildConnectorConfig("palo_alto_firewall"));
+    const blockActionId = playbook.actions.includes("block_ip_fortigate") ? "block_ip_fortigate" : "block_ip_paloalto";
+    const builtBlockStep = buildConnector(blockActionId, fwCfg, pos[pi++], {
     address: safeStepVar("Extract_IOCs", "source_ip"),
     address_group: "SOAR-Blocked-IPs",
     description: `SOARForge WAF block - Incident {{ vars.steps.Build_Context.record_id | default('N/A') | string }}`,
-  }) ?? buildSetVarStep("Block_IP", {
-    block_status: "not_configured",
-    note: "Configure fortigate_firewall or palo_alto_firewall connector to enable IP blocking",
-  }, pos[pi - 1]);
-  blockStep.uuid = blockUuid;
-  blockStep.name = "Block_IP";
-  steps.push(blockStep);
-  routes.push(buildRoute("WAF_Action_Decision", "Block_IP", decisionStep.uuid, blockUuid));
-  routes.push(buildRoute("WAF_Approval_Decision", "Block_IP", postApprovalUuid, blockUuid));
+  });
+    if (!builtBlockStep) {
+      throw new Error(`WAF Block_IP connector step could not be built for selected action '${blockActionId}'.`);
+    }
+    const blockStep = builtBlockStep;
+    blockStep.uuid = blockUuid;
+    blockStep.name = "Block_IP";
+    markDynamicNode(blockStep, blockActionId, "waf_block_ip");
+    steps.push(blockStep);
+    routes.push(buildRoute("WAF_Action_Decision", "Block_IP", decisionStep.uuid, blockUuid));
+    routes.push(buildRoute("WAF_Approval_Decision", "Block_IP", postApprovalUuid, blockUuid));
 
   // Step 10: CDN_Guardrail_Note
-  const cdnGuardrailStep = buildSetVarStep("CDN_Cloud_Guardrail", {
+    const cdnGuardrailStep = buildSetVarStep("CDN_Cloud_Guardrail", {
     guardrail_note: "OWASP WAF Guardrail: Blocked IP {{ vars.steps.Extract_IOCs.source_ip | default('N/A') | string }}. Verify this IP is not a CDN (Cloudflare, Akamai, Fastly) or cloud provider (AWS, Azure, GCP) range.",
     block_completed: "true",
   }, pos[pi++]);
-  steps.push(cdnGuardrailStep);
-  routes.push(buildRoute("Block_IP", "CDN_Cloud_Guardrail", blockUuid, cdnGuardrailStep.uuid));
-  routes.push(buildRoute("CDN_Cloud_Guardrail", "Finalize", cdnGuardrailStep.uuid, finalizeStep.uuid));
+    steps.push(cdnGuardrailStep);
+    routes.push(buildRoute("Block_IP", "CDN_Cloud_Guardrail", blockUuid, cdnGuardrailStep.uuid));
+    routes.push(buildRoute("CDN_Cloud_Guardrail", "Finalize", cdnGuardrailStep.uuid, finalizeStep.uuid));
+  }
 
   // Create ticket if configured
   const ticketUuid = generateUUID();
@@ -2338,6 +2361,21 @@ function buildAugmentedTemplateWorkflow(playbook: PlaybookState, profile: FortiS
 
   const steps = workflow.steps || [];
   const stepNames = new Set(steps.map((s) => s.name));
+  const getStepMeta = (step: FortiSOARStep): { actionId?: string } | undefined =>
+    (step.arguments as Record<string, unknown>)?.__soarforge_meta as { actionId?: string } | undefined;
+  const findExistingStepsForAction = (actionId: string): FortiSOARStep[] => {
+    const action = getActionById(actionId);
+    if (!action) return [];
+    const byMeta = steps.filter((s) => getStepMeta(s)?.actionId === actionId);
+    if (byMeta.length > 0) return byMeta;
+    const byConnectorOp = steps.filter((s) => {
+      const args = s.arguments as Partial<FortiSOARConnectorArguments>;
+      return args.connector === action.connector && args.operation === action.operation;
+    });
+    if (byConnectorOp.length > 0) return byConnectorOp;
+    const connectorStepName = action.displayName.replace(/\s+/g, "_");
+    return steps.filter((s) => s.name === connectorStepName);
+  };
   const unsupportedEnrichments: Array<{ key: string; reason: string }> = [];
   const unsupportedActions: Array<{ key: string; reason: string }> = [];
   const generatedEnrichments = new Set<string>();
@@ -2374,8 +2412,7 @@ function buildAugmentedTemplateWorkflow(playbook: PlaybookState, profile: FortiS
       (isEnrichment ? unsupportedEnrichments : unsupportedActions).push({ key: sourceKey, reason: `Action '${actionId}' not found in registry.` });
       return;
     }
-    const connectorStepName = action.displayName.replace(/\s+/g, "_");
-    if (stepNames.has(connectorStepName)) {
+    if (findExistingStepsForAction(actionId).length > 0) {
       (isEnrichment ? generatedEnrichments : generatedActions).add(sourceKey);
       return;
     }
@@ -2400,15 +2437,14 @@ function buildAugmentedTemplateWorkflow(playbook: PlaybookState, profile: FortiS
   }
 
   const hasConnectedPathForActionId = (actionId: string): boolean => {
-    const action = getActionById(actionId);
-    if (!action) return false;
-    const stepName = action.displayName.replace(/\s+/g, "_");
-    const step = steps.find((s) => s.name === stepName);
-    if (!step) return false;
-    const stepIri = `/api/3/workflow_steps/${step.uuid}`;
-    const hasInbound = routes.some((r) => r.targetStep === stepIri);
-    const hasOutbound = routes.some((r) => r.sourceStep === stepIri);
-    return hasInbound && (hasOutbound || step.name === "Finalize");
+    const matched = findExistingStepsForAction(actionId);
+    if (matched.length === 0) return false;
+    return matched.some((step) => {
+      const stepIri = `/api/3/workflow_steps/${step.uuid}`;
+      const hasInbound = routes.some((r) => r.targetStep === stepIri);
+      const hasOutbound = routes.some((r) => r.sourceStep === stepIri);
+      return hasInbound && (hasOutbound || step.name === "Finalize");
+    });
   };
 
   const missingEnrichmentSteps = (playbook.enrichmentConnectors || []).filter((key) => {
@@ -2488,7 +2524,8 @@ export function buildDefaultDeploymentProfile(
 
 export function generateReadinessChecks(
   playbook: PlaybookState,
-  profile: FortiSOARDeploymentProfile
+  profile: FortiSOARDeploymentProfile,
+  workflowCollection?: FortiSOARWorkflowCollection
 ): FortiSOARReadinessCheck[] {
   const normalizedProfile = normalizeDeploymentProfileForSelections(profile, playbook);
   const checks: FortiSOARReadinessCheck[] = [];
@@ -2500,6 +2537,24 @@ export function generateReadinessChecks(
   checks.push({ id: "enrichment_configured", label: "Enrichment sources configured", category: "enrichment", passed: playbook.enrichmentConnectors.length > 0, critical: false, fixStepNumber: 4 });
   checks.push({ id: "scoring_model_selected", label: "Scoring model selected", category: "scoring", passed: !!playbook.scoringModel?.type && (playbook.scoringModel.type as string) !== "", critical: true, fixStepNumber: 5 });
   checks.push({ id: "actions_selected", label: "Response actions selected", category: "actions", passed: playbook.actions.length > 0, critical: true, fixStepNumber: 6 });
+
+  const contractErrors = validateCapabilityContract(playbook);
+  checks.push({ id: "capability_contract_valid", label: "Step 11 capability contract validation", category: "actions", passed: contractErrors.length === 0, critical: true, note: contractErrors.join('; ') || undefined, fixStepNumber: 11 });
+
+  const dependencyErrors: string[] = [];
+  for (const actionId of playbook.actions || []) {
+    const action = getActionById(actionId);
+    if (!action) continue;
+    const cfg = normalizedProfile.connectors[action.connectorKey];
+    if (!cfg) dependencyErrors.push(`Missing connector profile for selected action ${actionId}: ${action.connectorKey}`);
+    else if (validateConfigValue(cfg.config) === 'empty' || validateConfigValue(cfg.config) === 'invalid') dependencyErrors.push(`Connector config missing/invalid for selected action ${actionId}: ${cfg.displayName}`);
+  }
+  checks.push({ id: "action_connector_dependencies", label: "Response-action connector dependencies configured", category: "connectors", passed: dependencyErrors.length === 0, critical: true, note: dependencyErrors.join('; ') || undefined, fixStepNumber: 11 });
+
+  if (workflowCollection) {
+    const wfErrors = validateGeneratedWorkflowStructure(workflowCollection, playbook);
+    checks.push({ id: "workflow_structure_valid", label: "Generated workflow structure valid (steps/routes/decisions/approvals)", category: "actions", passed: wfErrors.length === 0, critical: true, note: wfErrors.join('; ') || undefined, fixStepNumber: 11 });
+  }
 
   const connectorStatuses = Object.entries(normalizedProfile.connectors).map(([key, connector]) => ({
     key, connector, status: validateConfigValue(connector.config),
@@ -2588,6 +2643,110 @@ export function normalizeDeploymentProfileForSelections(
   };
 }
 
+
+function validateGeneratedWorkflowStructure(collection: FortiSOARWorkflowCollection, playbook: PlaybookState): string[] {
+  const errors: string[] = [];
+  const workflow = collection.data?.[0]?.workflows?.[0];
+  if (!workflow) return ['No generated workflow found in collection.'];
+
+  const stepIds = new Set(workflow.steps.map((s) => `/api/3/workflow_steps/${s.uuid}`));
+  for (const r of workflow.routes) {
+    if (!stepIds.has(r.sourceStep)) errors.push(`Route source missing step: ${r.sourceStep}`);
+    if (!stepIds.has(r.targetStep)) errors.push(`Route target missing step: ${r.targetStep}`);
+  }
+
+  const dynamicByAction = new Map<string, FortiSOARStep[]>();
+  const dynamicByCapability = new Map<string, FortiSOARStep[]>();
+  const connectorOpIndex = new Map<string, FortiSOARStep[]>();
+  const enrichmentConnectorFallback: Record<string, Array<{ connector: string; operation: string }>> = {
+    abuseipdb: [{ connector: "abuseipdb", operation: "ip_lookup" }],
+    virustotal: [
+      { connector: "virustotal", operation: "get_ip_report" },
+      { connector: "virustotal", operation: "get_url_report" },
+      { connector: "virustotal", operation: "get_file_report" },
+      { connector: "virustotal", operation: "get_domain_report" },
+    ],
+    fortiguard: [{ connector: "fortiguard", operation: "lookup_url" }],
+    qradar: [{ connector: "qradar", operation: "run_aql_query" }],
+  };
+  for (const step of workflow.steps) {
+    const args = step.arguments as Record<string, unknown>;
+    const meta = args?.__soarforge_meta as { actionId?: string; capabilityId?: string } | undefined;
+    if (meta?.actionId) dynamicByAction.set(meta.actionId, [...(dynamicByAction.get(meta.actionId) ?? []), step]);
+    if (meta?.capabilityId) dynamicByCapability.set(meta.capabilityId, [...(dynamicByCapability.get(meta.capabilityId) ?? []), step]);
+    const connectorArgs = step.arguments as Partial<FortiSOARConnectorArguments>;
+    if (connectorArgs.connector && connectorArgs.operation) {
+      const key = `${connectorArgs.connector}::${connectorArgs.operation}`;
+      connectorOpIndex.set(key, [...(connectorOpIndex.get(key) ?? []), step]);
+    }
+  }
+
+  for (const step of workflow.steps) {
+    if (step.stepType === FORTISOAR_STEP_TYPE_IRIS.decision) {
+      const args = step.arguments as FortiSOARDecisionArguments;
+      for (const c of args.conditions || []) {
+        if (c.step_iri && !stepIds.has(c.step_iri)) errors.push(`Decision ${step.name} references missing step ${c.step_iri}`);
+      }
+    }
+    if (step.stepType === FORTISOAR_STEP_TYPE_IRIS.approval) {
+      const args = step.arguments as FortiSOARApprovalArguments;
+      for (const opt of args.response_mapping?.options || []) {
+        if (opt.step_iri && !stepIds.has(opt.step_iri)) errors.push(`Approval ${step.name} response_mapping references missing step ${opt.step_iri}`);
+      }
+    }
+  }
+
+  for (const actionId of playbook.actions || []) {
+    const action = getActionById(actionId);
+    if (!action) continue;
+    const metaSteps = dynamicByAction.get(actionId) ?? [];
+    const fallbackKey = `${action.connector}::${action.operation}`;
+    const fallbackSteps = connectorOpIndex.get(fallbackKey) ?? [];
+    const matchedSteps = metaSteps.length > 0 ? metaSteps : fallbackSteps;
+    if (matchedSteps.length === 0) {
+      errors.push(`Selected action missing generated dynamic node: ${actionId}`);
+      continue;
+    }
+    for (const st of matchedSteps) {
+      const iri = `/api/3/workflow_steps/${st.uuid}`;
+      const inbound = workflow.routes.some((r) => r.targetStep === iri);
+      const outbound = workflow.routes.some((r) => r.sourceStep === iri);
+      if (!inbound || !outbound) {
+        errors.push(`Dynamic node connectivity invalid for ${actionId}: ${st.name} (inbound=${inbound}, outbound=${outbound})`);
+      }
+    }
+  }
+  if ((playbook.actions || []).some((a) => a === "block_ip_fortigate" || a === "block_ip_paloalto") && (dynamicByCapability.get("waf_block_ip") ?? []).length === 0) {
+    errors.push("WAF block action selected but __soarforge_meta capabilityId 'waf_block_ip' node not found.");
+  }
+  if ((dynamicByCapability.get("waf_block_ip") ?? []).length > 0 && !(playbook.actions || []).some((a) => a === "block_ip_fortigate" || a === "block_ip_paloalto")) {
+    errors.push("Unselected dynamic WAF block node detected (metadata present without selected action).");
+  }
+  for (const connectorKey of playbook.enrichmentConnectors || []) {
+    if (!["abuseipdb", "virustotal", "fortiguard", "qradar"].includes(connectorKey)) continue;
+    const capabilityMetaKey = `${connectorKey}_enrichment`;
+    const metaSteps = dynamicByCapability.get(capabilityMetaKey) ?? [];
+    let matchedSteps = metaSteps;
+    if (matchedSteps.length === 0) {
+      const fallbacks = enrichmentConnectorFallback[connectorKey] ?? [];
+      matchedSteps = fallbacks.flatMap((f) => connectorOpIndex.get(`${f.connector}::${f.operation}`) ?? []);
+    }
+    if (matchedSteps.length === 0) {
+      errors.push(`Selected enrichment/hunt connector missing generated connected node: ${connectorKey}`);
+      continue;
+    }
+    for (const st of matchedSteps) {
+      const iri = `/api/3/workflow_steps/${st.uuid}`;
+      const inbound = workflow.routes.some((r) => r.targetStep === iri);
+      const outbound = workflow.routes.some((r) => r.sourceStep === iri);
+      if (!inbound || !outbound) {
+        errors.push(`Enrichment/hunt node connectivity invalid for ${connectorKey}: ${st.name} (inbound=${inbound}, outbound=${outbound})`);
+      }
+    }
+  }
+  return Array.from(new Set(errors));
+}
+
 // ============================================================================
 // Full Export Package Generator
 // ============================================================================
@@ -2598,7 +2757,7 @@ export function generateFortiSOARExportPackage(
 ): FortiSOARExportPackage {
   const normalizedProfile = normalizeDeploymentProfileForSelections(profile, playbook);
   const workflowCollection = generateFortiSOARWorkflowCollection(playbook, normalizedProfile);
-  const readinessChecks = generateReadinessChecks(playbook, normalizedProfile);
+  const readinessChecks = generateReadinessChecks(playbook, normalizedProfile, workflowCollection);
 
   const criticalPassed = readinessChecks.filter((c) => c.critical && c.passed).length;
   const criticalTotal = readinessChecks.filter((c) => c.critical).length;

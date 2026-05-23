@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Plus, X, CheckCircle } from 'lucide-react';
 import { FORTISOAR_CONNECTOR_TEMPLATES } from '@/lib/fortisoar-action-registry';
+import { cleanupSelectionsByContract, getVisibleConnectorKeys } from '@/lib/capability-contract';
 
 const CATEGORY_ORDER = [
   'EDR',
@@ -40,21 +41,22 @@ export default function Step4Enrichment() {
 
   const handleAddConnector = (connectorId: string) => {
     if (!playbook.enrichmentConnectors.includes(connectorId)) {
-      setPlaybook({
+      setPlaybook(cleanupSelectionsByContract({
         ...playbook,
         enrichmentConnectors: [...playbook.enrichmentConnectors, connectorId],
-      });
+      }));
     }
   };
 
   const handleRemoveConnector = (connectorId: string) => {
-    setPlaybook({
+    setPlaybook(cleanupSelectionsByContract({
       ...playbook,
       enrichmentConnectors: playbook.enrichmentConnectors.filter((c) => c !== connectorId),
-    });
+    }));
   };
 
-  const connectors = getConnectorEntries();
+  const visibleConnectorKeys = new Set(getVisibleConnectorKeys(playbook, ['enrichment', 'hunt']));
+  const connectors = getConnectorEntries().filter((c) => visibleConnectorKeys.has(c.id));
   const selectedConnectors = connectors.filter((connector) =>
     playbook.enrichmentConnectors.includes(connector.id)
   );

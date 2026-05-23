@@ -17,6 +17,7 @@ import { DEFAULT_LLM_ASSISTANT_BOUNDARY } from './llm-assistant-boundary';
 import { getDefaultTenantLearningProfile } from './tenant-learning-profile';
 import { getTenantLearningNotes } from './feedback-learning-engine';
 import { applyIntelligencePlus } from './intelligence-plus';
+import { getVisibleActionIds, getVisibleConnectorKeys } from '@/lib/capability-contract';
 
 function statusFromScore(score: number): IntelligenceReviewResult['status'] {
   if (score >= 92) return 'excellent';
@@ -90,7 +91,12 @@ export function analyzePlaybookIntelligence(args: {
   threatCoverage: ThreatCoverageResult;
   exportReadiness: ExportReadinessResult;
 }): IntelligenceReviewResult {
-  const context = buildPlaybookIntelligenceContext(args);
+  const contractPlaybook = {
+    ...args.playbook,
+    enrichmentConnectors: (args.playbook.enrichmentConnectors || []).filter((c) => new Set(getVisibleConnectorKeys(args.playbook)).has(c)),
+    actions: (args.playbook.actions || []).filter((a) => new Set(getVisibleActionIds(args.playbook)).has(a)),
+  };
+  const context = buildPlaybookIntelligenceContext({ ...args, playbook: contractPlaybook });
   const recommendations = runDeterministicReasoning(context);
   const autoHardeningPlan = buildAutoHardeningPlan(recommendations);
   const score = calculateIntelligenceScore(context, recommendations);
